@@ -1,0 +1,100 @@
+export type Id = string | number
+
+export interface NoteTag {
+  id: Id
+  name: string
+}
+
+export interface Note {
+  id: Id
+  folder_id: Id | null
+  title: string
+  body_md: string
+  is_pinned: boolean
+  archived_at: string | null
+  trashed_at: string | null
+  created_at: string
+  updated_at: string
+  revision: number
+  tags: NoteTag[]
+  /** Optional: only present if the backend chooses to include them. */
+  attachment_count?: number
+  has_attachments?: boolean
+}
+
+export interface Folder {
+  id: Id
+  name: string
+  parent_id: Id | null
+  position: number
+  created_at: string
+  updated_at: string
+}
+
+export interface Tag {
+  id: Id
+  name: string
+  created_at: string
+  note_count: number
+}
+
+export interface Attachment {
+  id: Id
+  filename: string
+  content_type: string
+  byte_size: number
+  created_at: string
+}
+
+export type NotesView = 'all' | 'archived' | 'trashed'
+
+export interface NotesQuery {
+  view: NotesView
+  folder?: string | null
+  tag?: string | null
+  q?: string
+}
+
+export interface NotesPage {
+  notes: Note[]
+  /** Offset to pass as `cursor` for the next page, or null when exhausted. */
+  nextCursor: number | null
+}
+
+export interface Session {
+  email: string
+}
+
+export interface AppConfig {
+  app: string
+  auth: string
+}
+
+export interface NotePatch {
+  title?: string
+  body_md?: string
+  folder_id?: Id | null
+  is_pinned?: boolean
+  archived_at?: string | null
+  trashed_at?: string | null
+  tag_ids?: Id[]
+}
+
+export interface UploadResult {
+  attachment: Attachment | null
+  /** Storage quota warning reported by the backend, if any. */
+  warning: string | null
+}
+
+export interface AsyncList<T> {
+  data: T[] | undefined
+  isLoading: boolean
+  error: string | null
+  onRetry: () => void
+}
+
+export const PAGE_SIZE = 50
+export const MAX_TITLE = 500
+export const MAX_BODY = 200_000
+export const MAX_TAGS_PER_NOTE = 50
+export const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024

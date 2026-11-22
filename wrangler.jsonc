@@ -1,0 +1,26 @@
+{
+  "name": "inotion-notes",
+  "main": "worker/index.ts",
+  "compatibility_date": "2026-11-22",
+  "assets": {
+    "directory": "./dist",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": [
+      "/api/*"
+    ]
+  },
+  "routes": [
+    {
+      "pattern": "inotion.eu.cc",
+      "custom_domain": true
+    }
+  ],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "inotion-notes",
+      "database_id": "d765bb72-58b0-4dbe-8ec9-8d68ab4dbe88",
+      "migrations_dir": "migrations"
+    }
+  ]
+}
