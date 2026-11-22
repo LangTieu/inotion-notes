@@ -1,0 +1,13 @@
+PRAGMA foreign_keys = ON;
+CREATE TABLE folders (id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, name TEXT NOT NULL, parent_id TEXT REFERENCES folders(id) ON DELETE CASCADE, position INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, UNIQUE(user_id,parent_id,name));
+CREATE INDEX folders_user_parent ON folders(user_id,parent_id);
+CREATE TABLE notes (id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, folder_id TEXT REFERENCES folders(id) ON DELETE SET NULL, title TEXT NOT NULL DEFAULT '', body_md TEXT NOT NULL DEFAULT '', is_pinned INTEGER NOT NULL DEFAULT 0, archived_at INTEGER, trashed_at INTEGER, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, revision INTEGER NOT NULL DEFAULT 1);
+CREATE INDEX notes_user_views ON notes(user_id,trashed_at,archived_at,is_pinned,updated_at DESC);
+CREATE INDEX notes_user_folder ON notes(user_id,folder_id);
+CREATE TABLE tags (id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, name TEXT NOT NULL, created_at INTEGER NOT NULL, UNIQUE(user_id,name));
+CREATE TABLE note_tags (note_id TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE, tag_id TEXT NOT NULL REFERENCES tags(id) ON DELETE CASCADE, PRIMARY KEY(note_id,tag_id));
+CREATE INDEX note_tags_tag ON note_tags(tag_id);
+CREATE VIRTUAL TABLE notes_fts USING fts5(title, content='notes', content_rowid='rowid', tokenize='unicode61');
+CREATE TRIGGER notes_fts_insert AFTER INSERT ON notes BEGIN INSERT INTO notes_fts(rowid,title) VALUES(new.rowid,new.title); END;
+CREATE TRIGGER notes_fts_update AFTER UPDATE OF title ON notes BEGIN INSERT INTO notes_fts(notes_fts,rowid,title) VALUES('delete',old.rowid,old.title); INSERT INTO notes_fts(rowid,title) VALUES(new.rowid,new.title); END;
+CREATE TRIGGER notes_fts_delete AFTER DELETE ON notes BEGIN INSERT INTO notes_fts(notes_fts,rowid,title) VALUES('delete',old.rowid,old.title); END;
