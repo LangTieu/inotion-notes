@@ -6,6 +6,8 @@ import {
   type Id,
   type Note,
   type NotePatch,
+  type NoteRevisionMeta,
+  type NoteRevisionDetail,
   type NotesPage,
   type NotesQuery,
   type NotesView,
@@ -230,6 +232,10 @@ export const restoreNote = (id: Id) =>
   request<Note>(`/api/notes/${encodeURIComponent(String(id))}/restore`, {
     method: 'POST',
   })
+
+export const listNoteRevisions = (id: Id) => request<NoteRevisionMeta[]>(`/api/notes/${encodeURIComponent(String(id))}/revisions`)
+export const getNoteRevision = (id: Id, revId: string) => request<NoteRevisionDetail>(`/api/notes/${encodeURIComponent(String(id))}/revisions/${encodeURIComponent(revId)}`)
+export const restoreNoteRevision = (id: Id, revId: string, current_revision: number) => request<Note>(`/api/notes/${encodeURIComponent(String(id))}/revisions/${encodeURIComponent(revId)}/restore`,json('POST',{current_revision}))
 
 /* ----------------------------- folders ----------------------------- */
 

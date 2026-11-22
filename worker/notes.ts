@@ -1,5 +1,6 @@
 import { decryptText, encryptText, getEncryptionKey, ENC_PREFIX } from './crypto';
 import type { SessionUser } from './auth';
+import { maybeSnapshotNote } from './revisions';
 
 export interface NotesEnv { DB: D1Database; ENCRYPTION_KEY?: string }
 type NoteRow = { id:string; user_id:string; folder_id:string|null; title:string; body_md:string; is_pinned:number; archived_at:number|null; trashed_at:number|null; created_at:number; updated_at:number; revision:number };
@@ -91,6 +92,9 @@ export async function handleNotes(request:Request,env:NotesEnv,user:SessionUser,
     if(!row)return error('Note not found',404);
     if(Number(input.revision)!==row.revision)return error('Revision conflict',409);
     if(input.body_md!==undefined&&(typeof input.body_md!=='string'||input.body_md.length>MAX_BODY))return error('Invalid note body');
+    const nextTitle=input.title===undefined?row.title:(typeof input.title==='string'?input.title.slice(0,500):row.title);
+    const contentChanged=nextTitle!==row.title||(input.body_md!==undefined&&input.body_md!==await decryptText(row.body_md,await getEncryptionKey(env.ENCRYPTION_KEY)));
+    if(contentChanged||input.force_snapshot===true)await maybeSnapshotNote(env,db,row,{force:input.force_snapshot===true});
     const folderId=input.folder_id===undefined?row.folder_id:(typeof input.folder_id==='string'&&input.folder_id?input.folder_id:null);
     if(folderId&&!await ownedFolder(db,folderId,user.id))return error('Folder not found',404);
     const key=await getEncryptionKey(env.ENCRYPTION_KEY),now=Date.now();
@@ -104,7 +108,9 @@ export async function handleNotes(request:Request,env:NotesEnv,user:SessionUser,
     return readNote(db,user,noteId,key);
   }
   if(path==='/api/notes/:id'&&request.method==='DELETE') {
-    const noteId=url.pathname.split('/').pop()!,result=await db.prepare('DELETE FROM notes WHERE id=? AND user_id=?').bind(noteId,user.id).run();
+    const noteId=url.pathname.split('/').pop()!;
+    await db.prepare('DELETE FROM note_revisions WHERE note_id=? AND user_id=?').bind(noteId,user.id).run();
+    const result=await db.prepare('DELETE FROM notes WHERE id=? AND user_id=?').bind(noteId,user.id).run();
     return result.meta.changes?json({ok:true}):error('Note not found',404);
   }
   if(path==='/api/notes/:id/restore'&&request.method==='POST') {

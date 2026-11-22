@@ -26,6 +26,7 @@ beforeEach(async()=>{
     INSERT INTO users VALUES('user-a','a@example.test'),('user-b','b@example.test');
     CREATE TABLE folders(id TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,name TEXT NOT NULL,parent_id TEXT REFERENCES folders(id) ON DELETE CASCADE,position INTEGER NOT NULL DEFAULT 0,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL,UNIQUE(user_id,parent_id,name));
     CREATE TABLE notes(id TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,folder_id TEXT REFERENCES folders(id) ON DELETE SET NULL,title TEXT NOT NULL DEFAULT '',body_md TEXT NOT NULL DEFAULT '',is_pinned INTEGER NOT NULL DEFAULT 0,archived_at INTEGER,trashed_at INTEGER,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL,revision INTEGER NOT NULL DEFAULT 1);
+    CREATE TABLE note_revisions(id TEXT PRIMARY KEY,note_id TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,user_id TEXT NOT NULL REFERENCES users(id),revision INTEGER NOT NULL,title TEXT NOT NULL,body_md TEXT NOT NULL,created_at INTEGER NOT NULL);
     CREATE INDEX notes_user_views ON notes(user_id,trashed_at,archived_at,is_pinned,updated_at DESC);
     CREATE TABLE tags(id TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,name TEXT NOT NULL,created_at INTEGER NOT NULL,UNIQUE(user_id,name));
     CREATE TABLE note_tags(note_id TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,tag_id TEXT NOT NULL REFERENCES tags(id) ON DELETE CASCADE,PRIMARY KEY(note_id,tag_id));

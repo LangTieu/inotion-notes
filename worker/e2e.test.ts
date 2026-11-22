@@ -30,6 +30,7 @@ beforeEach(async()=>{
     CREATE TABLE login_attempts(key_hash TEXT PRIMARY KEY,attempts INTEGER NOT NULL,window_started_at INTEGER NOT NULL);
     CREATE TABLE folders(id TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id),name TEXT NOT NULL,parent_id TEXT,position INTEGER NOT NULL DEFAULT 0,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL,UNIQUE(user_id,parent_id,name));
     CREATE TABLE notes(id TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id),folder_id TEXT,title TEXT NOT NULL DEFAULT '',body_md TEXT NOT NULL DEFAULT '',is_pinned INTEGER NOT NULL DEFAULT 0,archived_at INTEGER,trashed_at INTEGER,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL,revision INTEGER NOT NULL DEFAULT 1);
+    CREATE TABLE note_revisions(id TEXT PRIMARY KEY,note_id TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,user_id TEXT NOT NULL REFERENCES users(id),revision INTEGER NOT NULL,title TEXT NOT NULL,body_md TEXT NOT NULL,created_at INTEGER NOT NULL);
     CREATE VIRTUAL TABLE notes_fts USING fts5(title,content='notes',content_rowid='rowid',tokenize='unicode61');
     CREATE TRIGGER notes_fts_insert AFTER INSERT ON notes BEGIN INSERT INTO notes_fts(rowid,title) VALUES(new.rowid,new.title); END;
     CREATE TRIGGER notes_fts_update AFTER UPDATE OF title ON notes BEGIN INSERT INTO notes_fts(notes_fts,rowid,title) VALUES('delete',old.rowid,old.title);INSERT INTO notes_fts(rowid,title) VALUES(new.rowid,new.title);END;

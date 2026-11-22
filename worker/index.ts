@@ -3,6 +3,7 @@ import { handleNotes } from './notes';
 import { decryptText, encryptText, getEncryptionKey } from './crypto';
 import { generateTotpSecret, hashRecoveryCode, recoveryCodes, verifyTotp } from './totp';
 import { deleteNoteAttachments, handleAttachments, type AttachmentEnv } from './attachments';
+import { handleRevisions } from './revisions';
 
 interface Env extends AuthEnv, AttachmentEnv { ASSETS: Fetcher; }
 const json = (body: unknown, status = 200, headers: HeadersInit = {}) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', ...headers } });
@@ -111,6 +112,8 @@ async function route(request: Request, env: Env): Promise<Response> {
   if (path.startsWith('/api/notes') || path.startsWith('/api/folders') || path.startsWith('/api/tags')) {
     const user = await currentSession(request, env);
     if (!user) return error('Not authenticated', 401);
+    const revisionResponse=await handleRevisions(request,env,user,path,url);
+    if(revisionResponse)return revisionResponse;
     const noteIdPath = /^\/api\/notes\/[^/]+(?:\/restore)?$/.test(path);
     const logicalPath = noteIdPath ? path.replace(/^\/api\/notes\/[^/]+(?:\/restore)?$/, path.endsWith('/restore') ? '/api/notes/:id/restore' : '/api/notes/:id') : path;
     if (path.startsWith('/api/notes/') && path.endsWith('/attachments')) return await handleAttachments(request, env, user, path, url) || error('Not found', 404);

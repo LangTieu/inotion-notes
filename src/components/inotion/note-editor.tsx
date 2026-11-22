@@ -28,7 +28,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Spinner } from '@/components/ui/spinner'
-import { ApiError, deleteNote, getNote, patchNote, restoreNote } from '@/lib/inotion/api'
+import { ApiError, deleteNote, getNote, getNoteRevision, listNoteRevisions, patchNote, restoreNote, restoreNoteRevision } from '@/lib/inotion/api'
 import { flattenFolders } from '@/lib/inotion/folders'
 import { formatFullDate } from '@/lib/inotion/format'
 import {
@@ -44,9 +44,11 @@ import { cn } from '@/lib/utils'
 import { AttachmentsPanel } from './attachments-panel'
 import { ConfirmDialog } from './confirm-dialog'
 import { ConflictDialog } from './conflict-dialog'
-import { MarkdownPreview } from './markdown-preview'
 import { ErrorBox } from './state-views'
 import { TagPicker } from './tag-picker'
+import { MarkdownPreview } from './markdown-preview'
+import { RichMarkdownEditor } from '../RichMarkdownEditor'
+import { RevisionHistoryDrawer } from '../RevisionHistoryDrawer'
 
 type SaveStatus = 'saved' | 'dirty' | 'saving' | 'error' | 'conflict'
 
@@ -123,7 +125,8 @@ export function NoteEditor({
 }: NoteEditorProps) {
   const [title, setTitle] = useState(note.title)
   const [body, setBody] = useState(note.body_md)
-  const [mode, setMode] = useState<'write' | 'preview'>('write')
+  const [focusMode, setFocusMode] = useState(false)
+  const [historyOpen,setHistoryOpen]=useState(false)
   const [status, setStatus] = useState<SaveStatus>('saved')
   const [saveError, setSaveError] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
@@ -131,7 +134,6 @@ export function NoteEditor({
   const [conflict, setConflict] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
 
-  const bodyRef = useRef<HTMLTextAreaElement>(null)
   const draftRef = useRef({ title: note.title, body: note.body_md })
   const savedRef = useRef({ title: note.title, body: note.body_md })
   const revisionRef = useRef(note.revision)
@@ -290,6 +292,7 @@ export function NoteEditor({
     const updated = await patchNote(note.id, latest.revision, {
       title: t,
       body_md: b,
+      force_snapshot: true,
     })
     revisionRef.current = updated.revision
     savedRef.current = { title: t, body: b }
@@ -342,31 +345,9 @@ export function NoteEditor({
           )}
         </div>
 
-        <div
-          role="group"
-          aria-label="Editor mode"
-          className="flex rounded-md bg-secondary p-0.5"
-        >
-          {(['write', 'preview'] as const).map((m) => (
-            <button
-              key={m}
-              type="button"
-              aria-pressed={mode === m}
-              onClick={() => setMode(m)}
-              className={cn(
-                'h-7 rounded-[6px] px-3 text-xs font-medium capitalize transition-colors focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:outline-none pointer-coarse:h-10 pointer-coarse:px-4',
-                mode === m
-                  ? 'bg-background text-foreground shadow-sm'
-                  : 'text-muted-foreground hover:text-foreground',
-              )}
-            >
-              {m === 'write' ? 'Write' : 'Preview'}
-            </button>
-          ))}
-        </div>
-
         {!readOnly && (
           <>
+            <button type="button" onClick={()=>setHistoryOpen(true)} className="rounded border px-2 py-1 text-xs">History</button>
             <button
               type="button"
               onClick={() => applyMeta('pin', { is_pinned: !note.is_pinned })}
@@ -488,8 +469,6 @@ export function NoteEditor({
           onKeyDown={(e) => {
             if (e.key === 'Enter' && !e.nativeEvent.isComposing && e.keyCode !== 229) {
               e.preventDefault()
-              setMode('write')
-              bodyRef.current?.focus()
             }
           }}
           readOnly={readOnly}
@@ -549,31 +528,15 @@ export function NoteEditor({
         </p>
       </div>
 
-      <div className="min-h-0 flex-1 border-t border-border">
-        {mode === 'write' ? (
-          <div className="flex h-full flex-col">
-            <textarea
-              ref={bodyRef}
-              value={body}
-              onChange={(e) => changeBody(e.target.value)}
-              readOnly={readOnly}
-              maxLength={MAX_BODY}
-              placeholder={readOnly ? '' : 'Start writing in Markdown…'}
-              aria-label="Note body (Markdown)"
-              spellCheck
-              className="min-h-0 w-full flex-1 resize-none bg-transparent px-4 py-4 text-[15px] leading-7 text-foreground placeholder:text-muted-foreground/70 focus:outline-none md:px-8"
-            />
+      <div className={cn('min-h-0 flex-1 border-t border-border', focusMode && 'fixed inset-0 z-40 flex flex-col border-0 bg-background')}>
+        <div className="h-full min-h-0">
+            <RichMarkdownEditor value={body} onChange={changeBody} disabled={readOnly} focusMode={focusMode} onToggleFocusMode={()=>setFocusMode(value=>!value)} renderPreview={(md,onToggleCheckbox)=><MarkdownPreview source={md} onToggleTask={readOnly?undefined:(line)=>onToggleCheckbox(line)}/>}/>
             {body.length > MAX_BODY - 5000 && (
               <p className="px-4 pb-2 text-xs text-muted-foreground md:px-8">
                 {body.length.toLocaleString('en-US')} / {MAX_BODY.toLocaleString('en-US')} characters
               </p>
             )}
-          </div>
-        ) : (
-          <div className="h-full overflow-y-auto px-4 py-4 md:px-8">
-            <MarkdownPreview source={body} />
-          </div>
-        )}
+        </div>
       </div>
 
       <AttachmentsPanel
@@ -581,6 +544,8 @@ export function NoteEditor({
         readOnly={readOnly}
         onCountChange={onAttachmentCount}
       />
+
+      <RevisionHistoryDrawer open={historyOpen} onClose={()=>setHistoryOpen(false)} noteId={String(note.id)} currentTitle={title} currentBodyMd={body} currentRevision={revisionRef.current} onLoadRevisions={id=>listNoteRevisions(id)} onLoadRevisionDetail={(id,revId)=>getNoteRevision(id,revId)} onRestore={async(id,revId,currentRevision)=>{await flushContent();const updated=await restoreNoteRevision(id,revId,currentRevision);revisionRef.current=updated.revision;savedRef.current={title:updated.title,body:updated.body_md};draftRef.current={title:updated.title,body:updated.body_md};setTitle(updated.title);setBody(updated.body_md);onUpdatedRef.current(updated)}} onSaveSnapshot={async()=>{await flushContent();const latest=await getNote(note.id);const snap=await patchNote(note.id,latest.revision,{force_snapshot:true});revisionRef.current=snap.revision;onUpdatedRef.current(snap)}} />
 
       <ConflictDialog open={conflict} onReload={reloadLatest} onOverwrite={overwrite} />
 

@@ -79,7 +79,11 @@ export interface NotePatch {
   archived_at?: string | null
   trashed_at?: string | null
   tag_ids?: Id[]
+  force_snapshot?: boolean
 }
+
+export interface NoteRevisionMeta { id: string; revision: number; title: string; created_at: number; byte_length: number }
+export interface NoteRevisionDetail extends NoteRevisionMeta { body_md: string }
 
 export interface UploadResult {
   attachment: Attachment | null
