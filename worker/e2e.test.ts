@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DatabaseSync } from 'node:sqlite';
 import worker from './index';
 import { hashPassword } from './auth';
+import { totpAt } from './totp';
 
 let sqlite:DatabaseSync, db:D1Database, originalFetch:typeof fetch;
 const password='e2e-only-password-not-a-secret';
@@ -36,6 +37,15 @@ beforeEach(async()=>{
     CREATE TABLE tags(id TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id),name TEXT NOT NULL,created_at INTEGER NOT NULL,UNIQUE(user_id,name));
     CREATE TABLE note_tags(note_id TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,tag_id TEXT NOT NULL REFERENCES tags(id) ON DELETE CASCADE,PRIMARY KEY(note_id,tag_id));
     CREATE TABLE attachments(id TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id),note_id TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,object_key TEXT NOT NULL UNIQUE,filename TEXT NOT NULL,content_type TEXT NOT NULL,byte_size INTEGER NOT NULL,created_at INTEGER NOT NULL,b2_account TEXT NOT NULL DEFAULT 'tk1');`);
+  sqlite.exec(`ALTER TABLE users ADD COLUMN totp_secret_enc TEXT NULL;
+    ALTER TABLE users ADD COLUMN totp_enabled_at INTEGER NULL;
+    ALTER TABLE users ADD COLUMN last_totp_step INTEGER NULL;
+    ALTER TABLE sessions ADD COLUMN session_id TEXT;
+    ALTER TABLE sessions ADD COLUMN user_agent TEXT NULL;
+    CREATE UNIQUE INDEX idx_sessions_public_id ON sessions(session_id);
+    CREATE TABLE user_recovery_codes (id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, code_hash TEXT NOT NULL, used_at INTEGER NULL, created_at INTEGER NOT NULL);
+    CREATE INDEX idx_recovery_codes_user ON user_recovery_codes(user_id, used_at);
+    CREATE TABLE auth_challenges (token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, expires_at INTEGER NOT NULL, created_at INTEGER NOT NULL);`);
   await db.prepare('INSERT INTO users(id,email,password_hash,created_at,updated_at) VALUES(?,?,?,?,?)').bind('owner','owner@example.test',await hashPassword(password),Date.now(),Date.now()).run();
 });
 afterEach(()=>{globalThis.fetch=originalFetch;sqlite?.close();});
@@ -69,5 +79,69 @@ describe('Phase 4 authenticated end-to-end flow',()=>{
     expect((await request('/api/auth/me','GET',undefined,cookie)).status).toBe(401);
     const nextLogin=await request('/api/auth/login','POST',JSON.stringify({email:'owner@example.test',password}));cookie=nextLogin.headers.get('Set-Cookie')!.split(';')[0];
     expect((await json(await request('/api/notes','GET',undefined,cookie))).notes).toHaveLength(0);
+  });
+});
+
+describe('Phase 5 2FA and session integration',()=>{
+  async function signedIn(){
+    const response=await request('/api/auth/login','POST',JSON.stringify({email:'owner@example.test',password}));
+    return response.headers.get('Set-Cookie')!.split(';')[0];
+  }
+  async function enableTwoFactor(cookie:string){
+    const setup=await json(await request('/api/auth/2fa/setup','POST','{}',cookie));
+    const code=await totpAt(setup.secret_base32,Math.floor(Date.now()/30000));
+    const enabled=await request('/api/auth/2fa/enable','POST',JSON.stringify({password,code}),cookie);
+    expect(enabled.status).toBe(200);
+    const body=await json(enabled); expect(body.recovery_codes).toHaveLength(8);
+    return {secret:setup.secret_base32,recoveryCodes:body.recovery_codes as string[]};
+  }
+  async function challenge(){
+    const response=await request('/api/auth/login','POST',JSON.stringify({email:'owner@example.test',password}));
+    expect(response.status).toBe(200); expect(response.headers.get('Set-Cookie')).toBeNull();
+    const body=await json(response); expect(body.requires_2fa).toBe(true);
+    return body.challenge_token as string;
+  }
+
+  it('supports password-only and TOTP login, then consumes recovery codes once',async()=>{
+    const plain=await request('/api/auth/login','POST',JSON.stringify({email:'owner@example.test',password}));
+    expect(plain.status).toBe(200); expect(await json(plain)).toEqual({email:'owner@example.test'}); expect(plain.headers.get('Set-Cookie')).toContain('notes_session=');
+    const managementCookie=plain.headers.get('Set-Cookie')!.split(';')[0];
+    const {secret,recoveryCodes}=await enableTwoFactor(managementCookie);
+    let token=await challenge();
+    const invalid=await request('/api/auth/2fa/verify','POST',JSON.stringify({challenge_token:token,code:'000000'})); expect(invalid.status).toBe(401);
+    token=await challenge();
+    // Enable records the current step, so exercise login with the next valid window to avoid replay protection.
+    const verified=await request('/api/auth/2fa/verify','POST',JSON.stringify({challenge_token:token,code:await totpAt(secret,Math.floor(Date.now()/30000)+1)}));
+    expect(verified.status).toBe(200); expect(await json(verified)).toEqual({email:'owner@example.test'}); expect(verified.headers.get('Set-Cookie')).toContain('notes_session=');
+    token=await challenge();
+    const recovery=await request('/api/auth/2fa/verify','POST',JSON.stringify({challenge_token:token,code:recoveryCodes[0]}));
+    expect(recovery.status).toBe(200); expect(recovery.headers.get('Set-Cookie')).toContain('notes_session=');
+    token=await challenge();
+    expect((await request('/api/auth/2fa/verify','POST',JSON.stringify({challenge_token:token,code:recoveryCodes[0]}))).status).toBe(401);
+  });
+
+  it('rate limits repeated invalid 2FA verification attempts at five failures',async()=>{
+    const cookie=await signedIn(); await enableTwoFactor(cookie); const token=await challenge();
+    const statuses:number[]=[];
+    for(let i=0;i<6;i++)statuses.push((await request('/api/auth/2fa/verify','POST',JSON.stringify({challenge_token:token,code:'000000'}))).status);
+    expect(statuses).toEqual([401,401,401,401,401,429]);
+  });
+
+  it('lists sessions without hashes and revokes individual and other sessions',async()=>{
+    const current=await signedIn(), other=await signedIn();
+    const sessions=await json(await request('/api/auth/sessions','GET',undefined,current));
+    expect(sessions).toHaveLength(2);
+    expect(sessions.filter((session:any)=>session.is_current===1||session.is_current===true)).toHaveLength(1);
+    expect(sessions.find((session:any)=>session.is_current)?.is_current).toBeTruthy();
+    expect(JSON.stringify(sessions)).not.toContain('id_hash');
+    const otherSession=sessions.find((session:any)=>!session.is_current);
+    expect(otherSession.session_id).toBeTruthy();
+    expect((await request(`/api/auth/sessions/${otherSession.session_id}`,'DELETE',undefined,current)).status).toBe(200);
+    expect((await request('/api/auth/me','GET',undefined,other)).status).toBe(401);
+
+    const third=await signedIn();
+    expect((await request('/api/auth/sessions/revoke-others','POST','{}',current)).status).toBe(200);
+    expect((await request('/api/auth/me','GET',undefined,current)).status).toBe(200);
+    expect((await request('/api/auth/me','GET',undefined,third)).status).toBe(401);
   });
 });

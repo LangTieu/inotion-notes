@@ -1,5 +1,7 @@
 import { cookieHeader, createSession, currentSession, hashPassword, isAllowed, readCookie, sha256Hex, validMutationOrigin, verifyPassword, type AuthEnv } from './auth';
 import { handleNotes } from './notes';
+import { decryptText, encryptText, getEncryptionKey } from './crypto';
+import { generateTotpSecret, hashRecoveryCode, recoveryCodes, verifyTotp } from './totp';
 import { deleteNoteAttachments, handleAttachments, type AttachmentEnv } from './attachments';
 
 interface Env extends AuthEnv, AttachmentEnv { ASSETS: Fetcher; }
@@ -20,17 +22,42 @@ async function login(request: Request, env: Env): Promise<Response> {
   if (attempt && now - attempt.window_started_at < 900_000 && attempt.attempts >= 5) {
     return error('Too many login attempts', 429, { 'Retry-After': String(Math.max(1, Math.ceil((attempt.window_started_at + 900_000 - now) / 1000))) });
   }
-  const row = await env.DB.prepare('SELECT id, email, password_hash FROM users WHERE email = ? AND disabled_at IS NULL').bind(email).first<{ id: string; email: string; password_hash: string }>();
+  const row = await env.DB.prepare('SELECT id, email, password_hash, totp_enabled_at FROM users WHERE email = ? AND disabled_at IS NULL').bind(email).first<{ id: string; email: string; password_hash: string; totp_enabled_at: number | null }>();
   const valid = row ? await verifyPassword(row.password_hash, input.password) : await verifyPassword('pbkdf2-sha256$100000$c2VlZC1vbmx5LXNhbHQh$yoTKBqS5XcXPivLDMPTpcqANoXuIz6PBA52AELdVxPc', input.password);
   if (!row || !valid) {
-    const started = !attempt || now - attempt.window_started_at >= 900_000 ? now : attempt.window_started_at;
-    const attempts = started === now ? 1 : attempt!.attempts + 1;
+    const resetWindow = !attempt || now - attempt.window_started_at >= 900_000;
+    const started = resetWindow ? now : attempt!.window_started_at;
+    const attempts = resetWindow ? 1 : attempt!.attempts + 1;
     await env.DB.prepare('INSERT INTO login_attempts (key_hash, attempts, window_started_at) VALUES (?, ?, ?) ON CONFLICT(key_hash) DO UPDATE SET attempts = excluded.attempts, window_started_at = excluded.window_started_at').bind(keyHash, attempts, started).run();
     return error('Incorrect email or password', 401);
   }
   await env.DB.prepare('DELETE FROM login_attempts WHERE key_hash = ?').bind(keyHash).run();
-  const token = await createSession(env, row);
+  if (row.totp_enabled_at != null) { const challenge = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32)))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,''); await env.DB.prepare('INSERT INTO auth_challenges (token_hash,user_id,expires_at,created_at) VALUES (?,?,?,?)').bind(await sha256Hex(challenge),row.id,now+300000,now).run(); return json({ requires_2fa: true, challenge_token: challenge }); }
+  const token = await createSession(env, row, request.headers.get('user-agent') || '');
   return json({ email: row.email }, 200, { 'Set-Cookie': cookieHeader(token) });
+}
+
+async function twoFactorVerify(request:Request,env:Env):Promise<Response>{
+ let input:any;try{input=await request.json()}catch{return error('Invalid JSON body',400)}
+ if(typeof input?.challenge_token!=='string'||typeof input?.code!=='string')return error('Challenge and code are required',400);
+ const keyHash=await sha256Hex(`${request.headers.get('CF-Connecting-IP')||'unknown'}\nchallenge:${await sha256Hex(input.challenge_token)}`),now=Date.now();
+ const attempt=await env.DB.prepare('SELECT attempts,window_started_at FROM login_attempts WHERE key_hash=?').bind(keyHash).first<any>();
+ if(attempt&&now-attempt.window_started_at<900000&&attempt.attempts>=5)return error('Too many login attempts',429);
+ const challenge=await env.DB.prepare('SELECT c.user_id,u.email,u.totp_secret_enc,u.last_totp_step FROM auth_challenges c JOIN users u ON u.id=c.user_id WHERE c.token_hash=? AND c.expires_at>? AND u.disabled_at IS NULL').bind(await sha256Hex(input.challenge_token),now).first<any>();
+ let matched:number|null=null, recovery:any=null;
+ if(challenge?.totp_secret_enc){const secret=await decryptText(challenge.totp_secret_enc,await getEncryptionKey((env as any).ENCRYPTION_KEY));matched=await verifyTotp(secret,input.code,now);if(matched!==null&&challenge.last_totp_step!=null&&matched<=challenge.last_totp_step)matched=null;if(matched===null){const hash=await hashRecoveryCode(input.code);recovery=await env.DB.prepare('SELECT id FROM user_recovery_codes WHERE user_id=? AND code_hash=? AND used_at IS NULL').bind(challenge.user_id,hash).first<any>();}}
+ if(!challenge||(!matched&&!recovery)){const resetWindow=!attempt||now-attempt.window_started_at>=900000;const started=resetWindow?now:attempt.window_started_at;const count=resetWindow?1:attempt.attempts+1;await env.DB.prepare('INSERT INTO login_attempts(key_hash,attempts,window_started_at) VALUES(?,?,?) ON CONFLICT(key_hash) DO UPDATE SET attempts=excluded.attempts,window_started_at=excluded.window_started_at').bind(keyHash,count,started).run();return error('Invalid or expired authentication code',401);}
+ await env.DB.prepare('DELETE FROM auth_challenges WHERE token_hash=?').bind(await sha256Hex(input.challenge_token)).run();if(matched!==null)await env.DB.prepare('UPDATE users SET last_totp_step=? WHERE id=?').bind(matched,challenge.user_id).run();else await env.DB.prepare('UPDATE user_recovery_codes SET used_at=? WHERE id=?').bind(now,recovery.id).run();
+ await env.DB.prepare('DELETE FROM login_attempts WHERE key_hash=?').bind(keyHash).run();const token=await createSession(env,{id:challenge.user_id,email:challenge.email},request.headers.get('user-agent')||'');return json({email:challenge.email},200,{'Set-Cookie':cookieHeader(token)});
+}
+async function securityRoutes(request:Request,env:Env,path:string):Promise<Response|null>{
+ const user=await currentSession(request,env);if(!user)return error('Not authenticated',401);
+ if(path==='/api/auth/2fa/setup'&&request.method==='POST'){const secret=generateTotpSecret();await env.DB.prepare('UPDATE users SET totp_secret_enc=?,totp_enabled_at=NULL WHERE id=?').bind(await encryptText(secret,await getEncryptionKey((env as any).ENCRYPTION_KEY)),user.id).run();return json({secret_base32:secret,otpauth_uri:`otpauth://totp/${encodeURIComponent('inotion Notes:'+user.email)}?secret=${secret}&issuer=${encodeURIComponent('inotion Notes')}`});}
+ if((path==='/api/auth/2fa/enable'||path==='/api/auth/2fa/disable')&&request.method==='POST'){let input:any;try{input=await request.json()}catch{return error('Invalid JSON body',400)}const row=await env.DB.prepare('SELECT password_hash,totp_secret_enc,last_totp_step FROM users WHERE id=?').bind(user.id).first<any>();if(!row||!await verifyPassword(row.password_hash,input?.password||''))return error('Password or code is incorrect',401);let matched:number|null=null;if(row.totp_secret_enc)matched=await verifyTotp(await decryptText(row.totp_secret_enc,await getEncryptionKey((env as any).ENCRYPTION_KEY)),input.code||'');if(matched===null||((path.endsWith('enable'))&&row.last_totp_step!=null&&matched<=row.last_totp_step))return error('Password or code is incorrect',401);if(path.endsWith('enable')){const codes=recoveryCodes();await env.DB.prepare('DELETE FROM user_recovery_codes WHERE user_id=?').bind(user.id).run();for(const code of codes)await env.DB.prepare('INSERT INTO user_recovery_codes(id,user_id,code_hash,created_at) VALUES(?,?,?,?)').bind(crypto.randomUUID(),user.id,await hashRecoveryCode(code),Date.now()).run();await env.DB.prepare('UPDATE users SET totp_enabled_at=?,last_totp_step=? WHERE id=?').bind(Date.now(),matched,user.id).run();return json({recovery_codes:codes});}await env.DB.prepare('UPDATE users SET totp_secret_enc=NULL,totp_enabled_at=NULL,last_totp_step=NULL WHERE id=?').bind(user.id).run();await env.DB.prepare('DELETE FROM user_recovery_codes WHERE user_id=?').bind(user.id).run();return json({ok:true});}
+ if(path==='/api/auth/sessions'&&request.method==='GET'){const hash=await sha256Hex(readCookie(request)!);const result=await env.DB.prepare('SELECT session_id,user_agent,created_at,last_seen_at,expires_at,(id_hash=?) AS is_current FROM sessions WHERE user_id=? AND revoked_at IS NULL AND expires_at>? ORDER BY last_seen_at DESC').bind(hash,user.id,Date.now()).all();return json(result.results);}
+ if(path==='/api/auth/sessions/revoke-others'&&request.method==='POST'){const hash=await sha256Hex(readCookie(request)!);const result=await env.DB.prepare('UPDATE sessions SET revoked_at=? WHERE user_id=? AND id_hash<>? AND revoked_at IS NULL').bind(Date.now(),user.id,hash).run();return json({ok:true,revoked_count:result.meta.changes});}
+ const match=path.match(/^\/api\/auth\/sessions\/([^/]+)$/);if(match&&request.method==='DELETE'){const result=await env.DB.prepare('UPDATE sessions SET revoked_at=? WHERE session_id=? AND user_id=? AND revoked_at IS NULL').bind(Date.now(),match[1],user.id).run();return result.meta.changes?json({ok:true}):error('Session not found',404);}
+ return null;
 }
 
 async function changePassword(request: Request, env: Env): Promise<Response> {
@@ -62,6 +89,8 @@ async function route(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url), path = url.pathname.replace(/\/+$/, '') || '/';
   if (path === '/api/config' && request.method === 'GET') return json({ app: 'inotion-notes', auth: 'email-password' });
   if (path === '/api/auth/login' && request.method === 'POST') return login(request, env);
+  if (path === '/api/auth/2fa/verify' && request.method === 'POST') { if(!validMutationOrigin(request)) return error('Invalid request origin',403); return twoFactorVerify(request,env); }
+  if (path.startsWith('/api/auth/2fa/') || path.startsWith('/api/auth/sessions')) { if(['POST','DELETE'].includes(request.method)&&!validMutationOrigin(request)) return error('Invalid request origin',403); return await securityRoutes(request,env,path) || error('Not found',404); }
   if (path === '/api/auth/change-password' && request.method === 'POST') return changePassword(request, env);
   if (path === '/api/auth/me' && request.method === 'GET') {
     const user = await currentSession(request, env);

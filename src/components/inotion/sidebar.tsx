@@ -1,4 +1,3 @@
-'use client'
 
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react'
 import {
@@ -15,6 +14,7 @@ import {
   Pin,
   Plus,
   Search,
+  ShieldCheck,
   Tag as TagIcon,
   Trash2,
   FolderInput,
@@ -37,6 +37,7 @@ import type { AsyncList, Folder, Tag } from '@/lib/inotion/types'
 import { cn } from '@/lib/utils'
 import { ConfirmDialog } from './confirm-dialog'
 import { ErrorBox } from './state-views'
+import { SecurityModal } from './security-modal'
 
 export interface SidebarProps {
   route: Route
@@ -201,6 +202,7 @@ export function Sidebar({
   const [signingOut, setSigningOut] = useState(false)
   const [shortcut, setShortcut] = useState('Ctrl K')
   const [passwordDialogOpen, setPasswordDialogOpen] = useState(false)
+  const [securityOpen, setSecurityOpen] = useState(false)
   const [currentPassword, setCurrentPassword] = useState('')
   const [newPassword, setNewPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
@@ -478,6 +480,10 @@ export function Sidebar({
             Sign out
           </button>
         </div>
+        <button type="button" onClick={() => setSecurityOpen(true)} className="flex h-8 w-full items-center justify-center gap-1.5 rounded-md border border-border bg-background text-xs font-medium hover:bg-secondary pointer-coarse:h-11">
+          <ShieldCheck className="size-3.5" aria-hidden="true" /> Security
+        </button>
+        <SecurityModal open={securityOpen} onOpenChange={setSecurityOpen} />
         <button
           type="button"
           onClick={() => { setPasswordDialogOpen(true); setPasswordError(null); setPasswordSuccess(false) }}

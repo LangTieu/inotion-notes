@@ -1,4 +1,3 @@
-'use client'
 
 import { useState, type FormEvent } from 'react'
 import { NotebookPen } from 'lucide-react'
@@ -6,10 +5,17 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Spinner } from '@/components/ui/spinner'
 import { ApiError } from '@/lib/inotion/api'
+import type { TwoFactorChallenge } from '@/lib/inotion/types'
 import { ErrorBox } from './state-views'
+import { TwoFactorStep } from './two-factor-step'
 
 interface SignInScreenProps {
-  onSignIn: (email: string, password: string) => Promise<void>
+  /** Resolves with a challenge when the account requires a 2FA code. */
+  onSignIn: (
+    email: string,
+    password: string,
+  ) => Promise<TwoFactorChallenge | void>
+  onVerify: (challengeToken: string, code: string) => Promise<void>
   /** Shown when the server could not be reached at startup. */
   serverError?: string | null
   onRetryServer?: () => void
@@ -33,6 +39,7 @@ function loginErrorMessage(error: unknown): string {
 
 export function SignInScreen({
   onSignIn,
+  onVerify,
   serverError,
   onRetryServer,
 }: SignInScreenProps) {
@@ -40,6 +47,13 @@ export function SignInScreen({
   const [password, setPassword] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [challengeToken, setChallengeToken] = useState<string | null>(null)
+
+  const backToSignIn = () => {
+    setChallengeToken(null)
+    setPassword('')
+    setError(null)
+  }
 
   const submit = async (e: FormEvent) => {
     e.preventDefault()
@@ -47,7 +61,11 @@ export function SignInScreen({
     setBusy(true)
     setError(null)
     try {
-      await onSignIn(email.trim(), password)
+      const result = await onSignIn(email.trim(), password)
+      if (result && result.challenge_token) {
+        setChallengeToken(result.challenge_token)
+        setBusy(false)
+      }
     } catch (err) {
       setError(loginErrorMessage(err))
       setBusy(false)
@@ -65,14 +83,22 @@ export function SignInScreen({
           </div>
           <div>
             <h1 className="text-xl font-semibold text-balance text-foreground">
-              inotion Notes
+              {challengeToken ? 'Two-Factor Authentication' : 'inotion Notes'}
             </h1>
             <p className="mt-1 text-sm text-muted-foreground">
-              Sign in to your private notebook
+              {challengeToken
+                ? 'Confirm it’s you to finish signing in'
+                : 'Sign in to your private notebook'}
             </p>
           </div>
         </div>
 
+        {challengeToken ? (
+          <TwoFactorStep
+            onVerify={(code) => onVerify(challengeToken, code)}
+            onBack={backToSignIn}
+          />
+        ) : (
         <form onSubmit={submit} className="mt-6 flex flex-col gap-4" noValidate>
           {message && (
             <ErrorBox
@@ -121,6 +147,7 @@ export function SignInScreen({
             {busy ? 'Signing in…' : 'Sign in'}
           </Button>
         </form>
+        )}
       </div>
     </main>
   )

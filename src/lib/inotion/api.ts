@@ -10,6 +10,7 @@ import {
   type NotesQuery,
   type NotesView,
   type Session,
+  type TwoFactorChallenge, type TwoFactorSetup, type AuthSession,
   type Tag,
   type UploadResult,
 } from './types'
@@ -135,7 +136,14 @@ function json(method: string, body: unknown): RequestInit {
 export const getConfig = () => request<AppConfig>('/api/config')
 
 export const login = (email: string, password: string) =>
-  request<Session>('/api/auth/login', json('POST', { email, password }))
+  request<Session | TwoFactorChallenge>('/api/auth/login', json('POST', { email, password }))
+export const verify2FA = (challenge_token:string,code:string) => request<Session>('/api/auth/2fa/verify',json('POST',{challenge_token,code}))
+export const setup2FA = () => request<TwoFactorSetup>('/api/auth/2fa/setup',{method:'POST'})
+export const enable2FA = (data:{password:string;code:string}) => request<{recovery_codes:string[]}>('/api/auth/2fa/enable',json('POST',data))
+export const disable2FA = (data:{password:string;code:string}) => request<{ok:boolean}>('/api/auth/2fa/disable',json('POST',data))
+export const listSessions = () => request<AuthSession[]>('/api/auth/sessions')
+export const revokeSession = (id:string) => request<{ok:boolean}>(`/api/auth/sessions/${encodeURIComponent(id)}`,{method:'DELETE'})
+export const revokeOtherSessions = () => request<{ok:boolean;revoked_count:number}>('/api/auth/sessions/revoke-others',{method:'POST'})
 
 /** Resolves to null when there is no active session (401). */
 export async function getSession(): Promise<Session | null> {

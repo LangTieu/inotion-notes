@@ -61,9 +61,10 @@ export interface NotesPage {
   nextCursor: number | null
 }
 
-export interface Session {
-  email: string
-}
+export interface Session { email: string; totp_enabled?: boolean }
+export interface TwoFactorChallenge { requires_2fa: true; challenge_token: string }
+export interface TwoFactorSetup { otpauth_uri: string; secret_base32: string }
+export interface AuthSession { session_id:string; user_agent:string|null; created_at:number; last_seen_at:number; expires_at:number; is_current:boolean }
 
 export interface AppConfig {
   app: string

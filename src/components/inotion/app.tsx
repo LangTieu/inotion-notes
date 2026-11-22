@@ -1,10 +1,10 @@
-'use client'
 
 import { useEffect } from 'react'
 import useSWR, { useSWRConfig } from 'swr'
 import { Spinner } from '@/components/ui/spinner'
 import {
   UNAUTHORIZED_EVENT,
+  verify2FA,
   getConfig,
   getSession,
   login,
@@ -36,8 +36,11 @@ export function InotionApp() {
 
   const signIn = async (email: string, password: string) => {
     const result = await login(email, password)
-    await mutateSession({ email: result?.email ?? email }, { revalidate: false })
+    if ('requires_2fa' in result) return result
+    await mutateSession({ email: result.email }, { revalidate: false })
   }
+
+  const verifyChallenge = async (token:string,code:string) => { const result=await verify2FA(token,code); await mutateSession({email:result.email},{revalidate:false}) }
 
   const signOut = async () => {
     try {
@@ -63,6 +66,7 @@ export function InotionApp() {
     return (
       <SignInScreen
         onSignIn={signIn}
+        onVerify={verifyChallenge}
         serverError={session.error ? (session.error as Error).message : null}
         onRetryServer={() => void mutateSession()}
       />

@@ -67,10 +67,10 @@ export async function currentSession(request: Request, env: AuthEnv): Promise<Se
   if (row) await env.DB.prepare('UPDATE sessions SET last_seen_at = ? WHERE id_hash = ?').bind(now, idHash).run();
   return row;
 }
-export async function createSession(env: AuthEnv, user: SessionUser): Promise<string> {
+export async function createSession(env: AuthEnv, user: SessionUser, userAgent = ''): Promise<string> {
   const token = b64url(crypto.getRandomValues(new Uint8Array(32)));
   const now = Date.now();
-  await env.DB.prepare('INSERT INTO sessions (id_hash, user_id, created_at, expires_at, last_seen_at) VALUES (?, ?, ?, ?, ?)').bind(await sha256Hex(token), user.id, now, now + SESSION_TTL_MS, now).run();
+  await env.DB.prepare('INSERT INTO sessions (id_hash, user_id, created_at, expires_at, last_seen_at, session_id, user_agent) VALUES (?, ?, ?, ?, ?, ?, ?)').bind(await sha256Hex(token), user.id, now, now + SESSION_TTL_MS, now, crypto.randomUUID(), userAgent.slice(0, 200) || null).run();
   return token;
 }
 export { decoder };
