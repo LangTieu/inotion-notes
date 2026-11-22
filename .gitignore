@@ -6,3 +6,4 @@ dist/
 *.log
 refs/
 design/
+.github-push/
