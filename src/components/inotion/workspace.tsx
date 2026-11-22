@@ -18,10 +18,15 @@ import {
   deleteTag,
   exportAllAsJson,
   getNote,
+  listAttachments,
+  listNotes,
   listFolders,
   listTags,
   updateFolder,
   updateTag,
+  patchNote,
+  uploadAttachment,
+  uploadLargeAttachment,
 } from '@/lib/inotion/api'
 import {
   navigate,
@@ -45,6 +50,9 @@ import { SearchBar } from './search-bar'
 import { Sidebar } from './sidebar'
 import { BlockError, EmptyState, ErrorBox } from './state-views'
 import { TagDialog, type TagDialogState } from './tag-dialog'
+import { parseImportFiles, type ImportReport } from '@/utils/importers'
+import { markdownWorkspaceZip, triggerDownload } from '@/utils/exportFormats'
+import type { ImportPreview, ImportProgress, ImportRunResult, ImportSource } from '../ImportExportModal'
 
 interface WorkspaceProps {
   email: string
@@ -383,10 +391,95 @@ export function Workspace({ email, onSignOut }: WorkspaceProps) {
     )
   }
 
+  const onParseImport = async (files: FileList | File[], _source: ImportSource): Promise<ImportPreview> => {
+    const report = await parseImportFiles(Array.from(files))
+    return {
+      notes: report.notes.length,
+      folders: report.folders.length,
+      tags: report.tags.length,
+      attachments: report.attachmentCount,
+      payload: report,
+    }
+  }
+  const onRunImport = async (
+    payload: unknown,
+    onProgress: (progress: ImportProgress) => void,
+  ): Promise<ImportRunResult> => {
+    const report = payload as ImportReport
+    const errors: ImportRunResult['errors'] = report.errors.map((error) => ({ item: error.file, message: error.error }))
+    const folderMap = new Map<string, string>()
+    const knownFolders = foldersSwr.data ?? []
+    const seedFolder = (folder: Folder, parent = '') => {
+      const path = parent ? `${parent}/${folder.name}` : folder.name
+      folderMap.set(path, String(folder.id))
+      knownFolders.filter((child) => String(child.parent_id) === String(folder.id)).forEach((child) => seedFolder(child, path))
+    }
+    knownFolders.filter((folder) => folder.parent_id == null).forEach((folder) => seedFolder(folder))
+    const ensureFolder = async (path: string): Promise<string | null> => {
+      if (!path) return null
+      const existing = folderMap.get(path)
+      if (existing) return existing
+      const parts = path.split('/')
+      const parent = await ensureFolder(parts.slice(0, -1).join('/'))
+      const created = await createFolder(parts.at(-1)!, parent)
+      folderMap.set(path, String(created.id))
+      return String(created.id)
+    }
+    const allTags = await listTags()
+    let done = 0
+    for (const item of report.notes) {
+      try {
+        const note = await createNote({ title: item.title, body_md: item.body_md, folder_id: await ensureFolder(item.folder) })
+        const tagIds = [] as (string | number)[]
+        for (const name of item.tags) {
+          let tag = allTags.find((candidate) => candidate.name.toLowerCase() === name.toLowerCase())
+          if (!tag) { tag = await createTag(name); allTags.push(tag) }
+          tagIds.push(tag.id)
+        }
+        if (tagIds.length) await patchNote(note.id, note.revision, { tag_ids: tagIds })
+        for (const file of item.attachments) {
+          if (file.size > 25 * 1024 * 1024) await uploadLargeAttachment(note.id, file)
+          else await uploadAttachment(note.id, file)
+        }
+        done += 1
+      } catch (error) {
+        errors.push({ item: item.source || item.title, message: error instanceof Error ? error.message : 'Import failed' })
+      }
+      onProgress({ done, total: report.notes.length, label: `Imported ${done} of ${report.notes.length} notes` })
+    }
+    void list.reload()
+    void tagsSwr.mutate()
+    void foldersSwr.mutate()
+    return { succeeded: done, errors }
+  }
+  const onExportMarkdownZip = async (_onProgress?: (progress: { done: number; total: number }) => void) => {
+    const all: Note[] = []
+    for (const view of ['all', 'archived', 'trashed'] as const) {
+      let cursor = 0
+      for (let pageIndex = 0; pageIndex < 10000; pageIndex += 1) {
+        const page = await listNotes({ view }, cursor)
+        all.push(...page.notes)
+        if (page.nextCursor == null || page.nextCursor <= cursor) break
+        cursor = page.nextCursor
+      }
+    }
+    const metadata: Record<string, string[]> = {}
+    for (const note of all) metadata[String(note.id)] = (await listAttachments(note.id)).map((attachment) => attachment.filename)
+    const bytes = markdownWorkspaceZip(all, foldersSwr.data ?? [], metadata)
+    triggerDownload('inotion-markdown.zip', new Blob([bytes.slice().buffer as ArrayBuffer], { type: 'application/zip' }))
+  }
+
   return (
     <div className="flex h-dvh overflow-hidden bg-background text-foreground">
       <button type="button" className="fixed right-3 top-3 z-20 rounded-md border bg-background px-3 py-2 text-xs shadow-sm" onClick={() => setImportExportOpen(true)}>Import / Export</button>
-      <ImportExportModal open={importExportOpen} onClose={() => setImportExportOpen(false)} notes={list.items} folders={folders} onImported={() => { list.reload(); void tagsSwr.mutate(); void foldersSwr.mutate() }} />
+      <ImportExportModal
+        open={importExportOpen}
+        onClose={() => setImportExportOpen(false)}
+        onParseImport={onParseImport}
+        onRunImport={onRunImport}
+        onExportJson={async () => { await exportAllAsJson() }}
+        onExportMarkdownZip={onExportMarkdownZip}
+      />
       <aside
         aria-label="Sidebar"
         className="hidden w-64 shrink-0 border-r border-sidebar-border md:flex xl:w-72"
