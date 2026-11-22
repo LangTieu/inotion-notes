@@ -215,10 +215,11 @@ export function AttachmentsPanel({ noteId, readOnly = false, onCountChange }: At
                 className="pointer-coarse:h-11"
               >
                 {a.uploading ? <Spinner /> : <Upload aria-hidden="true" />}
-                {a.uploading ? 'Uploading…' : 'Upload files'}
+              {a.uploading ? 'Uploading…' : 'Upload files'}
               </Button>
               <p className="text-xs text-muted-foreground">or drop files here</p>
               <div className="w-full max-w-xs">
+                {a.uploadProgress && <div className="mb-2 text-xs text-muted-foreground"><progress className="w-full" value={a.uploadProgress.loaded} max={a.uploadProgress.total} />{a.uploadProgress.filename} · {Math.round(a.uploadProgress.loaded/a.uploadProgress.total*100)}%</div>}
                 <Progress
                   value={percent}
                   aria-label="Attachment storage used by this note"

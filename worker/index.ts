@@ -116,7 +116,7 @@ async function route(request: Request, env: Env): Promise<Response> {
     if(revisionResponse)return revisionResponse;
     const noteIdPath = /^\/api\/notes\/[^/]+(?:\/restore)?$/.test(path);
     const logicalPath = noteIdPath ? path.replace(/^\/api\/notes\/[^/]+(?:\/restore)?$/, path.endsWith('/restore') ? '/api/notes/:id/restore' : '/api/notes/:id') : path;
-    if (path.startsWith('/api/notes/') && path.endsWith('/attachments')) return await handleAttachments(request, env, user, path, url) || error('Not found', 404);
+    if (/^\/api\/notes\/[^/]+\/attachments(?:\/(?:presign|complete))?$/.test(path)) return await handleAttachments(request, env, user, path, url) || error('Not found', 404);
     if (/^\/api\/notes\/[^/]+$/.test(path) && request.method === 'DELETE') {
       const existing = await env.DB.prepare('SELECT id FROM notes WHERE id=? AND user_id=?').bind(path.split('/').pop(),user.id).first();
       if (!existing) return error('Note not found',404);

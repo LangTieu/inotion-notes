@@ -102,4 +102,4 @@ export const PAGE_SIZE = 50
 export const MAX_TITLE = 500
 export const MAX_BODY = 200_000
 export const MAX_TAGS_PER_NOTE = 50
-export const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024
+export const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024 * 1024

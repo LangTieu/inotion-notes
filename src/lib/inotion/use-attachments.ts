@@ -7,6 +7,7 @@ import {
   deleteAttachment,
   listAttachments,
   uploadAttachment,
+  uploadLargeAttachment,
 } from './api'
 import { formatBytes } from './format'
 import { MAX_ATTACHMENT_BYTES, type Attachment, type Id } from './types'
@@ -38,6 +39,7 @@ export function useAttachments(
   const [uploadError, setUploadError] = useState<string | null>(null)
   const [warning, setWarning] = useState<string | null>(null)
   const [removeError, setRemoveError] = useState<string | null>(null)
+  const [uploadProgress,setUploadProgress] = useState<{filename:string;loaded:number;total:number}|null>(null)
 
   useEffect(() => {
     if (data) onCountChange?.(noteId, data.length)
@@ -53,14 +55,16 @@ export function useAttachments(
       let used = totalBytes
       const errors: string[] = []
       for (const file of files) {
-        if (used + file.size > MAX_ATTACHMENT_BYTES) {
+        if (file.size > 50 * 1024 * 1024 || used + file.size > MAX_ATTACHMENT_BYTES) {
           errors.push(
             `"${file.name}" (${formatBytes(file.size)}) would exceed the ${formatBytes(MAX_ATTACHMENT_BYTES)} limit for this note.`,
           )
           continue
         }
         try {
-          const result = await uploadAttachment(noteId, file)
+          const result = file.size > 25 * 1024 * 1024
+            ? await uploadLargeAttachment(noteId,file,(loaded,total)=>setUploadProgress({filename:file.name,loaded,total}))
+            : await uploadAttachment(noteId, file)
           used += file.size
           if (result.warning) setWarning(result.warning)
           await mutate()
@@ -69,6 +73,7 @@ export function useAttachments(
         }
       }
       setUploadError(errors.length ? errors.join('\n') : null)
+      setUploadProgress(null)
       setUploading(false)
     },
     [noteId, totalBytes, mutate],
@@ -97,6 +102,7 @@ export function useAttachments(
     retry: () => void mutate(),
     totalBytes,
     uploading,
+    uploadProgress,
     uploadError,
     clearUploadError: () => setUploadError(null),
     warning,

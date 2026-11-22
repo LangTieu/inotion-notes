@@ -16,6 +16,7 @@ import {
   type Tag,
   type UploadResult,
 } from './types'
+import { compressImage } from '@/utils/importers'
 
 export class ApiError extends Error {
   status: number
@@ -294,6 +295,7 @@ export async function uploadAttachment(
   noteId: Id,
   file: File,
 ): Promise<UploadResult> {
+  file = await compressImage(file)
   const form = new FormData()
   form.append('file', file)
   const { data, res } = await send(
@@ -321,6 +323,17 @@ export const deleteAttachment = (id: Id) =>
   request<{ ok: boolean }>(`/api/attachments/${encodeURIComponent(String(id))}`, {
     method: 'DELETE',
   })
+
+export interface PresignedUpload { upload_url:string; object_key:string; expires_at:string; quota_warning?:boolean }
+export const presignAttachment = (noteId:Id,file:File) => request<PresignedUpload>(`/api/notes/${encodeURIComponent(String(noteId))}/attachments/presign`,json('POST',{filename:file.name,content_type:file.type,byte_size:file.size}))
+export const completeAttachment = (noteId:Id,file:File,object_key:string) => request<Attachment & {quota_warning?:boolean}>(`/api/notes/${encodeURIComponent(String(noteId))}/attachments/complete`,json('POST',{object_key,filename:file.name,content_type:file.type,byte_size:file.size}))
+export async function uploadLargeAttachment(noteId:Id,file:File,onProgress?:(loaded:number,total:number)=>void) {
+  file=await compressImage(file)
+  const prepared=await presignAttachment(noteId,file)
+  await new Promise<void>((resolve,reject)=>{const xhr=new XMLHttpRequest();xhr.open('PUT',prepared.upload_url);xhr.setRequestHeader('Content-Type',file.type);xhr.upload.onprogress=e=>onProgress?.(e.loaded,e.total||file.size);xhr.onload=()=>xhr.status>=200&&xhr.status<300?resolve():reject(new Error(`Storage upload failed (${xhr.status})`));xhr.onerror=()=>reject(new Error('Storage upload failed'));xhr.send(file)})
+  const attachment=await completeAttachment(noteId,file,prepared.object_key)
+  return {attachment,warning:prepared.quota_warning||attachment.quota_warning?'Storage is nearly full.':null}
+}
 
 /* ------------------------------ export ------------------------------ */
 

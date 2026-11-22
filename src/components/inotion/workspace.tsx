@@ -39,6 +39,7 @@ import { cn } from '@/lib/utils'
 import { FolderDialog, type FolderDialogState } from './folder-dialog'
 import { MobileTabBar, NewNoteFab } from './mobile-nav'
 import { NoteEditor } from './note-editor'
+import { ImportExportModal } from '../ImportExportModal'
 import { NoteList, NoteListToolbar } from './note-list'
 import { SearchBar } from './search-bar'
 import { Sidebar } from './sidebar'
@@ -54,6 +55,7 @@ const errorMessage = (e: unknown) =>
   e instanceof Error ? e.message : undefined
 
 export function Workspace({ email, onSignOut }: WorkspaceProps) {
+  const [importExportOpen, setImportExportOpen] = useState(false)
   const route = useRoute()
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [folderDialog, setFolderDialog] = useState<FolderDialogState | null>(null)
@@ -383,6 +385,8 @@ export function Workspace({ email, onSignOut }: WorkspaceProps) {
 
   return (
     <div className="flex h-dvh overflow-hidden bg-background text-foreground">
+      <button type="button" className="fixed right-3 top-3 z-20 rounded-md border bg-background px-3 py-2 text-xs shadow-sm" onClick={() => setImportExportOpen(true)}>Import / Export</button>
+      <ImportExportModal open={importExportOpen} onClose={() => setImportExportOpen(false)} notes={list.items} folders={folders} onImported={() => { list.reload(); void tagsSwr.mutate(); void foldersSwr.mutate() }} />
       <aside
         aria-label="Sidebar"
         className="hidden w-64 shrink-0 border-r border-sidebar-border md:flex xl:w-72"

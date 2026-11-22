@@ -49,6 +49,7 @@ import { TagPicker } from './tag-picker'
 import { MarkdownPreview } from './markdown-preview'
 import { RichMarkdownEditor } from '../RichMarkdownEditor'
 import { RevisionHistoryDrawer } from '../RevisionHistoryDrawer'
+import { exportNote } from '@/utils/exportFormats'
 
 type SaveStatus = 'saved' | 'dirty' | 'saving' | 'error' | 'conflict'
 
@@ -398,6 +399,9 @@ export function NoteEditor({
             <DropdownMenuItem onSelect={exportThisNote}>
               <Download aria-hidden="true" /> Export note as JSON
             </DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => exportNote(note,'md',folders.find(f=>String(f.id)===String(note.folder_id))?.name)}><Download aria-hidden="true" /> Export Markdown</DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => exportNote(note,'html')}><Download aria-hidden="true" /> Export HTML</DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => exportNote(note,'pdf')}><Download aria-hidden="true" /> Print / PDF</DropdownMenuItem>
             <DropdownMenuItem onSelect={() => void onExportAll().catch((e) => setActionError(e instanceof Error ? e.message : 'Export failed.'))}>
               <Download aria-hidden="true" /> Export all notes (JSON)
             </DropdownMenuItem>
