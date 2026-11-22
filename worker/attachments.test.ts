@@ -4,20 +4,21 @@ import { deleteNoteAttachments, handleAttachments } from './attachments';
 import type { SessionUser } from './auth';
 
 const user:SessionUser={id:'user-a',email:'a@example.test'}, other:SessionUser={id:'user-b',email:'b@example.test'};
-let sqlite:any,db:D1Database,objects:Map<string,Uint8Array>,originalFetch:typeof fetch;
-const env=()=>({DB:db,B2_KEY_ID:'test-key-id',B2_APPLICATION_KEY:'test-app-key',B2_BUCKET_NAME:'private-bucket',B2_S3_ENDPOINT:'https://s3.us-east-005.backblazeb2.com'});
+let sqlite:any,db:D1Database,objects:Map<string,Uint8Array>,originalFetch:typeof fetch,hosts:string[];
+const env=(tk2=true)=>({DB:db,B2_KEY_ID:'test-key-id',B2_APPLICATION_KEY:'test-app-key',B2_BUCKET_NAME:'private-bucket',B2_S3_ENDPOINT:'https://s3.us-east-005.backblazeb2.com',...(tk2?{B2_2_KEY_ID:'test-key-id-2',B2_2_APPLICATION_KEY:'test-app-key-2',B2_2_BUCKET_NAME:'private-bucket-2',B2_2_S3_ENDPOINT:'https://s3.us-west-004.backblazeb2.com'}:{})});
 const call=async(request:Request,path:string,who=user)=>handleAttachments(request,env(),who,path,new URL(request.url));
 beforeEach(async()=>{
-  sqlite=new DatabaseSync(':memory:');objects=new Map();originalFetch=globalThis.fetch;
+  sqlite=new DatabaseSync(':memory:');objects=new Map();hosts=[];originalFetch=globalThis.fetch;
   globalThis.fetch=vi.fn(async(input:RequestInfo|URL,init?:RequestInit)=>{
     const url=new URL(input instanceof Request?input.url:String(input)),key=decodeURIComponent(url.pathname.split('/').slice(2).join('/'));
+    hosts.push(url.host);
     const method=init?.method||'GET';
     if(method==='PUT'){objects.set(key,new Uint8Array(await new Response(init?.body).arrayBuffer()));return new Response(null,{status:200});}
     if(method==='DELETE'){objects.delete(key);return new Response(null,{status:204});}
     const data=objects.get(key);return data?new Response(data.slice().buffer as ArrayBuffer,{status:200}):new Response(null,{status:404});
   }) as typeof fetch;
   db={prepare(sql:string){let params:unknown[]=[];const statement=sqlite.prepare(sql);const wrapper:any={bind(...args:unknown[]){params=args;return wrapper;},first(column?:string){const row=statement.get(...params);return column?(row?.[column]??null):(row??null);},all(){return{results:statement.all(...params)};},run(){const result=statement.run(...params);return{meta:{changes:Number(result.changes)}};}};return wrapper;},async exec(sql:string){sqlite.exec(sql);return{count:0,duration:0,results:[]};}} as unknown as D1Database;
-  await db.exec(`PRAGMA foreign_keys=ON;CREATE TABLE users(id TEXT PRIMARY KEY);INSERT INTO users VALUES('user-a'),('user-b');CREATE TABLE notes(id TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id),title TEXT NOT NULL DEFAULT '',body_md TEXT NOT NULL DEFAULT '',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL,revision INTEGER NOT NULL DEFAULT 1);INSERT INTO notes(id,user_id,created_at,updated_at) VALUES('note-a','user-a',1,1),('note-b','user-b',1,1);CREATE TABLE attachments(id TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id),note_id TEXT NOT NULL REFERENCES notes(id),object_key TEXT NOT NULL UNIQUE,filename TEXT NOT NULL,content_type TEXT NOT NULL,byte_size INTEGER NOT NULL,created_at INTEGER NOT NULL);`);
+  await db.exec(`PRAGMA foreign_keys=ON;CREATE TABLE users(id TEXT PRIMARY KEY);INSERT INTO users VALUES('user-a'),('user-b');CREATE TABLE notes(id TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id),title TEXT NOT NULL DEFAULT '',body_md TEXT NOT NULL DEFAULT '',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL,revision INTEGER NOT NULL DEFAULT 1);INSERT INTO notes(id,user_id,created_at,updated_at) VALUES('note-a','user-a',1,1),('note-b','user-b',1,1);CREATE TABLE attachments(id TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id),note_id TEXT NOT NULL REFERENCES notes(id),object_key TEXT NOT NULL UNIQUE,filename TEXT NOT NULL,content_type TEXT NOT NULL,byte_size INTEGER NOT NULL,created_at INTEGER NOT NULL,b2_account TEXT DEFAULT 'tk1');`);
 });
 afterEach(()=>{globalThis.fetch=originalFetch;sqlite?.close();});
 
@@ -35,7 +36,7 @@ describe('B2 attachment lifecycle',()=>{
   it('rejects unsafe MIME types and attachments beyond the per-note quota',async()=>{
     const bad=new FormData();bad.set('file',new File(['<svg/>'],'active.svg',{type:'image/svg+xml'}));
     expect((await call(new Request('https://inotion.eu.cc/api/notes/note-a/attachments',{method:'POST',body:bad}),'/api/notes/note-a/attachments'))?.status).toBe(415);
-    await db.prepare('INSERT INTO attachments VALUES(?,?,?,?,?,?,?,?)').bind('existing','user-a','note-a','user-a/note-a/existing','large.pdf','application/pdf',25*1024*1024,1).run();
+    await db.prepare('INSERT INTO attachments(id,user_id,note_id,object_key,filename,content_type,byte_size,created_at) VALUES(?,?,?,?,?,?,?,?)').bind('existing','user-a','note-a','user-a/note-a/existing','large.pdf','application/pdf',25*1024*1024,1).run();
     const form=new FormData();form.set('file',new File(['x'],'small.txt',{type:'text/plain'}));
     const response=await call(new Request('https://inotion.eu.cc/api/notes/note-a/attachments',{method:'POST',body:form}),'/api/notes/note-a/attachments');expect(response?.status).toBe(413);
   });
@@ -44,13 +45,40 @@ describe('B2 attachment lifecycle',()=>{
     await db.exec("CREATE TRIGGER reject_attachment BEFORE INSERT ON attachments BEGIN SELECT RAISE(ABORT,'simulated insert failure'); END;");
     const failed=await call(new Request('https://inotion.eu.cc/api/notes/note-a/attachments',{method:'POST',body:form}),'/api/notes/note-a/attachments');expect(failed?.status).toBe(500);expect(objects.size).toBe(0);
     await db.exec('DROP TRIGGER reject_attachment;');
-    await db.prepare('INSERT INTO attachments VALUES(?,?,?,?,?,?,?,?)').bind('quota','user-b','note-b','user-b/note-b/quota','large.pdf','application/pdf',7*1024*1024*1024,1).run();
+    await db.prepare('INSERT INTO attachments(id,user_id,note_id,object_key,filename,content_type,byte_size,created_at) VALUES(?,?,?,?,?,?,?,?)').bind('quota','user-b','note-b','user-b/note-b/quota','large.pdf','application/pdf',7*1024*1024*1024,1).run();
     const uploaded=await call(new Request('https://inotion.eu.cc/api/notes/note-a/attachments',{method:'POST',body:form}),'/api/notes/note-a/attachments');expect((await uploaded!.json() as any).quotaWarning).toBe(true);
   });
   it('removes B2 objects and metadata for a permanent note deletion',async()=>{
     const form=new FormData();form.set('file',new File(['valid'],'note.txt',{type:'text/plain'}));
     await call(new Request('https://inotion.eu.cc/api/notes/note-a/attachments',{method:'POST',body:form}),'/api/notes/note-a/attachments');expect(objects.size).toBe(1);
-    await deleteNoteAttachments(env(),user,'note-a');expect(objects.size).toBe(0);
+    await db.prepare('INSERT INTO attachments(id,user_id,note_id,object_key,filename,content_type,byte_size,created_at,b2_account) VALUES(?,?,?,?,?,?,?,?,?)').bind('other-bucket','user-a','note-a','user-a/note-a/other-bucket','other.txt','text/plain',1,2,'tk2').run();objects.set('user-a/note-a/other-bucket',new TextEncoder().encode('x'));
+    hosts=[];await deleteNoteAttachments(env(),user,'note-a');expect(objects.size).toBe(0);expect(hosts).toContain('s3.us-east-005.backblazeb2.com');expect(hosts).toContain('s3.us-west-004.backblazeb2.com');
     expect((await db.prepare('SELECT id FROM attachments WHERE note_id=?').bind('note-a').all()).results).toHaveLength(0);
+  });
+  it('alternates uploads across configured accounts and falls back to TK1 when TK2 is absent',async()=>{
+    const upload=async()=>{const f=new FormData();f.set('file',new File(['x'],'x.txt',{type:'text/plain'}));return call(new Request('https://inotion.eu.cc/api/notes/note-a/attachments',{method:'POST',body:f}),'/api/notes/note-a/attachments');};
+    expect((await upload())?.status).toBe(201);expect((await upload())?.status).toBe(201);
+    expect(hosts.slice(0,2)).toEqual(['s3.us-east-005.backblazeb2.com','s3.us-west-004.backblazeb2.com']);
+    const accounts=(await db.prepare('SELECT b2_account FROM attachments ORDER BY created_at').all()).results.map((r:any)=>r.b2_account);
+    expect(accounts).toEqual(['tk1','tk2']);
+    expect((await upload())?.status).toBe(201);expect(hosts[2]).toBe('s3.us-east-005.backblazeb2.com');
+  });
+  it('reads and deletes from the saved account, treating legacy NULL as TK1',async()=>{
+    const insert=async(id:string,account:string|null)=>db.prepare('INSERT INTO attachments(id,user_id,note_id,object_key,filename,content_type,byte_size,created_at,b2_account) VALUES(?,?,?,?,?,?,?,?,?)').bind(id,'user-a','note-a',`user-a/note-a/${id}`,`${id}.txt`,'text/plain',1,1,account).run();
+    await insert('tk1',null);await insert('tk2','tk2');objects.set('user-a/note-a/tk1',new TextEncoder().encode('a'));objects.set('user-a/note-a/tk2',new TextEncoder().encode('b'));
+    expect((await call(new Request('https://inotion.eu.cc/api/attachments/tk1'),'/api/attachments/tk1'))?.status).toBe(200);
+    expect(hosts.at(-1)).toBe('s3.us-east-005.backblazeb2.com');
+    expect((await call(new Request('https://inotion.eu.cc/api/attachments/tk2'),'/api/attachments/tk2'))?.status).toBe(200);
+    expect(hosts.at(-1)).toBe('s3.us-west-004.backblazeb2.com');
+    await call(new Request('https://inotion.eu.cc/api/attachments/tk2',{method:'DELETE'}),'/api/attachments/tk2');expect(hosts.at(-1)).toBe('s3.us-west-004.backblazeb2.com');
+    await call(new Request('https://inotion.eu.cc/api/attachments/tk1',{method:'DELETE'}),'/api/attachments/tk1');expect(hosts.at(-1)).toBe('s3.us-east-005.backblazeb2.com');
+  });
+  it('warns at 7 GB per bucket without combining usage',async()=>{
+    const f=new FormData();f.set('file',new File(['x'],'x.txt',{type:'text/plain'}));
+    await db.prepare("INSERT INTO attachments(id,user_id,note_id,object_key,filename,content_type,byte_size,created_at,b2_account) VALUES('a','user-b','note-b','a','a.pdf','application/pdf',?,?,?)").bind(4*1024*1024*1024,1,'tk1').run();
+    await db.prepare("INSERT INTO attachments(id,user_id,note_id,object_key,filename,content_type,byte_size,created_at,b2_account) VALUES('b','user-b','note-b','b','b.pdf','application/pdf',?,?,?)").bind(4*1024*1024*1024,1,'tk2').run();
+    let response=await call(new Request('https://inotion.eu.cc/api/notes/note-a/attachments',{method:'POST',body:f}),'/api/notes/note-a/attachments');expect((await response!.json() as any).quotaWarning).toBe(false);
+    await db.prepare("UPDATE attachments SET byte_size=? WHERE id='a'").bind(7*1024*1024*1024).run();
+    response=await call(new Request('https://inotion.eu.cc/api/notes/note-a/attachments',{method:'POST',body:f}),'/api/notes/note-a/attachments');expect((await response!.json() as any).quotaWarning).toBe(true);
   });
 });

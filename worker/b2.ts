@@ -3,6 +3,27 @@ export interface B2Env {
   B2_APPLICATION_KEY?: string;
   B2_BUCKET_NAME?: string;
   B2_S3_ENDPOINT?: string;
+  B2_2_KEY_ID?: string;
+  B2_2_APPLICATION_KEY?: string;
+  B2_2_BUCKET_NAME?: string;
+  B2_2_S3_ENDPOINT?: string;
+}
+
+export type B2Account = 'tk1' | 'tk2';
+
+export function b2EnvFor(env: B2Env, account: B2Account): B2Env {
+  if (account === 'tk1') return env;
+  return {
+    B2_KEY_ID: env.B2_2_KEY_ID,
+    B2_APPLICATION_KEY: env.B2_2_APPLICATION_KEY,
+    B2_BUCKET_NAME: env.B2_2_BUCKET_NAME,
+    B2_S3_ENDPOINT: env.B2_2_S3_ENDPOINT,
+  };
+}
+
+export function isB2AccountConfigured(env: B2Env, account: B2Account): boolean {
+  const selected = b2EnvFor(env, account);
+  return Boolean(selected.B2_KEY_ID && selected.B2_APPLICATION_KEY && selected.B2_BUCKET_NAME && selected.B2_S3_ENDPOINT);
 }
 
 const encoder = new TextEncoder();

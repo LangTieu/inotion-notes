@@ -1,0 +1,1 @@
+ALTER TABLE attachments ADD COLUMN b2_account TEXT NOT NULL DEFAULT 'tk1';
