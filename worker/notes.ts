@@ -3,7 +3,7 @@ import type { SessionUser } from './auth';
 import { maybeSnapshotNote } from './revisions';
 
 export interface NotesEnv { DB: D1Database; ENCRYPTION_KEY?: string }
-type NoteRow = { id:string; user_id:string; folder_id:string|null; title:string; body_md:string; is_pinned:number; archived_at:number|null; trashed_at:number|null; created_at:number; updated_at:number; revision:number; short_code:string };
+type NoteRow = { id:string; user_id:string; folder_id:string|null; title:string; body_md:string; is_pinned:number; archived_at:number|null; trashed_at:number|null; reminder_at?:number|null; source_url?:string|null; created_at:number; updated_at:number; revision:number; short_code:string };
 const PAGE_SIZE = 50;
 const MAX_BODY = 200_000;
 const json = (value:unknown,status=200) => new Response(JSON.stringify(value), {status,headers:{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'}});
@@ -107,6 +107,8 @@ export async function handleNotes(request:Request,env:NotesEnv,user:SessionUser,
     if(!row)return error('Note not found',404);
     if(Number(input.revision)!==row.revision)return error('Revision conflict',409);
     if(input.body_md!==undefined&&(typeof input.body_md!=='string'||input.body_md.length>MAX_BODY))return error('Invalid note body');
+    if(input.reminder_at!==undefined && input.reminder_at!==null && (!Number.isSafeInteger(input.reminder_at)||Number(input.reminder_at)<0))return error('Invalid reminder');
+    if(input.reminder_at!==undefined && input.reminder_at!==null && (row.trashed_at!==null||row.archived_at!==null||(input.trashed_at!==undefined&&input.trashed_at!==null)||(input.archived_at!==undefined&&input.archived_at!==null)))return error('Cannot set a reminder on an archived or trashed note');
     const nextTitle=input.title===undefined?row.title:(typeof input.title==='string'?input.title.slice(0,500):row.title);
     const contentChanged=nextTitle!==row.title||(input.body_md!==undefined&&input.body_md!==await decryptText(row.body_md,await getEncryptionKey(env.ENCRYPTION_KEY)));
     if(input.trashed_at&&row.trashed_at===null)try{await db.prepare('UPDATE note_shares SET revoked_at=? WHERE note_id=? AND user_id=? AND revoked_at IS NULL').bind(Date.now(),noteId,user.id).run()}catch{/* Migration 0009 may not be applied during rolling deploys. */}
@@ -114,8 +116,8 @@ export async function handleNotes(request:Request,env:NotesEnv,user:SessionUser,
     const folderId=input.folder_id===undefined?row.folder_id:(typeof input.folder_id==='string'&&input.folder_id?input.folder_id:null);
     if(folderId&&!await ownedFolder(db,folderId,user.id))return error('Folder not found',404);
     const key=await getEncryptionKey(env.ENCRYPTION_KEY),now=Date.now();
-    await db.prepare('UPDATE notes SET title=?,body_md=?,folder_id=?,is_pinned=?,archived_at=?,trashed_at=?,updated_at=?,revision=revision+1 WHERE id=? AND user_id=? AND revision=?')
-      .bind(input.title===undefined?row.title:(typeof input.title==='string'?input.title.slice(0,500):row.title),input.body_md===undefined?row.body_md:await encryptText(input.body_md,key),folderId,input.is_pinned===undefined?row.is_pinned:(input.is_pinned?1:0),input.archived_at===undefined?row.archived_at:(Number(input.archived_at)||null),input.trashed_at===undefined?row.trashed_at:(Number(input.trashed_at)||null),now,noteId,user.id,row.revision).run();
+    await db.prepare('UPDATE notes SET title=?,body_md=?,folder_id=?,is_pinned=?,archived_at=?,trashed_at=?,reminder_at=?,updated_at=?,revision=revision+1 WHERE id=? AND user_id=? AND revision=?')
+      .bind(input.title===undefined?row.title:(typeof input.title==='string'?input.title.slice(0,500):row.title),input.body_md===undefined?row.body_md:await encryptText(input.body_md,key),folderId,input.is_pinned===undefined?row.is_pinned:(input.is_pinned?1:0),input.archived_at===undefined?row.archived_at:(Number(input.archived_at)||null),input.trashed_at===undefined?row.trashed_at:(Number(input.trashed_at)||null),input.reminder_at===undefined?(row.reminder_at??null):input.reminder_at,now,noteId,user.id,row.revision).run();
     if(Array.isArray(input.tag_ids)) {
       const ids=[...new Set(input.tag_ids.filter((x):x is string=>typeof x==='string'))].slice(0,50);
       await db.prepare('DELETE FROM note_tags WHERE note_id=?').bind(noteId).run();

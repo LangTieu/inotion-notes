@@ -54,6 +54,7 @@ import { RevisionHistoryDrawer } from '../RevisionHistoryDrawer'
 import { exportNote } from '@/utils/exportFormats'
 import { ShareButton } from '@/components/share-button'
 import { listNoteShares, revokeNoteShare } from '@/lib/inotion/api'
+import { ReminderPopover } from '@/components/reminder-popover'
 
 type SaveStatus = 'saved' | 'dirty' | 'saving' | 'error' | 'conflict'
 
@@ -397,6 +398,7 @@ export function NoteEditor({
         {!readOnly && (
           <>
             <ShareButton noteTitle={title} links={shareRecords} isLoading={shareLoading} onOpen={() => { void loadShares() }} onCreate={createShareFromModal} onRevoke={async id => { await revokeNoteShare(id);setShareRecords(current=>current.filter(link=>link.id!==id)) }} />
+            <ReminderPopover variant="toolbar" reminderAt={note.reminder_at} onChange={value => { void (async () => { try { const updated = await patchNote(note.id, revisionRef.current, { reminder_at: value }); revisionRef.current = updated.revision; onUpdatedRef.current(updated) } catch (error) { setSaveError(error instanceof Error ? error.message : 'Could not update reminder.') } })() }} />
             <button type="button" onClick={()=>setHistoryOpen(true)} className="rounded border px-2 py-1 text-xs">History</button>
             <button
               type="button"

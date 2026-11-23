@@ -16,6 +16,7 @@ export interface Note {
   trashed_at: string | null
   created_at: string
   updated_at: string
+  reminder_at?: number | null
   revision: number
   tags: NoteTag[]
   /** Optional: only present if the backend chooses to include them. */
@@ -81,6 +82,7 @@ export interface NotePatch {
   trashed_at?: string | null
   tag_ids?: Id[]
   force_snapshot?: boolean
+  reminder_at?: number | null
 }
 
 export interface NoteRevisionMeta { id: string; revision: number; title: string; created_at: number; byte_length: number }
