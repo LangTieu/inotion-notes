@@ -5,6 +5,7 @@ import { generateTotpSecret, hashRecoveryCode, recoveryCodes, verifyTotp } from 
 import { deleteNoteAttachments, handleAttachments, type AttachmentEnv } from './attachments';
 import { handleRevisions } from './revisions';
 import { handleSync } from './sync';
+import { handlePublic, handleShareApi, publicTrafficLimited } from './share';
 
 interface Env extends AuthEnv, AttachmentEnv { ASSETS: Fetcher; }
 const json = (body: unknown, status = 200, headers: HeadersInit = {}) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', ...headers } });
@@ -90,6 +91,12 @@ async function changePassword(request: Request, env: Env): Promise<Response> {
 async function route(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url), path = url.pathname.replace(/\/+$/, '') || '/';
   if (path === '/api/config' && request.method === 'GET') return json({ app: 'inotion-notes', auth: 'email-password' });
+  if (path.startsWith('/api/public/')) return await handlePublic(request,env,path) || error('Not found',404);
+  if (path.startsWith('/api/notes/') && path.endsWith('/shares') || /^\/api\/shares\//.test(path) || /^\/api\/folders\/[^/]+\/publish$/.test(path)) {
+    if (['POST','PUT','DELETE'].includes(request.method) && !validMutationOrigin(request)) return error('Invalid request origin',403);
+    const user=await currentSession(request,env);if(!user)return error('Not authenticated',401);
+    return await handleShareApi(request,env,user,path) || error('Not found',404);
+  }
   if (path === '/api/auth/login' && request.method === 'POST') return login(request, env);
   if (path === '/api/auth/2fa/verify' && request.method === 'POST') { if(!validMutationOrigin(request)) return error('Invalid request origin',403); return twoFactorVerify(request,env); }
   if (path.startsWith('/api/auth/2fa/') || path.startsWith('/api/auth/sessions')) { if(['POST','DELETE'].includes(request.method)&&!validMutationOrigin(request)) return error('Invalid request origin',403); return await securityRoutes(request,env,path) || error('Not found',404); }
@@ -134,7 +141,10 @@ async function route(request: Request, env: Env): Promise<Response> {
     return await handleAttachments(request,env,user,path,url) || error('Not found',404);
   }
   if (path.startsWith('/api/')) return error('Not found', 404);
-  return env.ASSETS.fetch(request);
+  if(/^\/(s|p)\//.test(path)&&await publicTrafficLimited(env))return error('Public traffic limit reached',503,{'Cache-Control':'public, max-age=86400','Content-Security-Policy':"default-src 'self'; script-src 'self'; object-src 'none'; base-uri 'none'",'X-Robots-Tag':'noindex, nofollow'});
+  const assetResponse=await env.ASSETS.fetch(request);
+  if(/^\/(s|p)\//.test(path)){const headers=new Headers(assetResponse.headers);headers.set('Content-Security-Policy',"default-src 'self'; script-src 'self'; object-src 'none'; base-uri 'none'");headers.set('X-Robots-Tag','noindex, nofollow');headers.set('Cache-Control','public, max-age=86400');return new Response(assetResponse.body,{status:assetResponse.status,headers});}
+  return assetResponse;
 }
 
 export default {

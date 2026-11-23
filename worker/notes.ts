@@ -3,14 +3,20 @@ import type { SessionUser } from './auth';
 import { maybeSnapshotNote } from './revisions';
 
 export interface NotesEnv { DB: D1Database; ENCRYPTION_KEY?: string }
-type NoteRow = { id:string; user_id:string; folder_id:string|null; title:string; body_md:string; is_pinned:number; archived_at:number|null; trashed_at:number|null; created_at:number; updated_at:number; revision:number };
+type NoteRow = { id:string; user_id:string; folder_id:string|null; title:string; body_md:string; is_pinned:number; archived_at:number|null; trashed_at:number|null; created_at:number; updated_at:number; revision:number; short_code:string };
 const PAGE_SIZE = 50;
 const MAX_BODY = 200_000;
 const json = (value:unknown,status=200) => new Response(JSON.stringify(value), {status,headers:{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'}});
 const error = (message:string,status=400) => json({error:message},status);
 const newId = () => crypto.randomUUID();
+const SHORT_CODE_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+export function generateShortCode(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(8));
+  return Array.from(bytes, byte => SHORT_CODE_ALPHABET[byte % SHORT_CODE_ALPHABET.length]).join('');
+}
 const parseBody = async (request:Request):Promise<Record<string,unknown>|null> => { try { const value=await request.json(); return value && typeof value==='object' && !Array.isArray(value) ? value as Record<string,unknown> : null; } catch { return null; } };
 const cleanName = (value:unknown) => typeof value==='string' ? value.trim().slice(0,100) : '';
+async function purgePublicCache(){try{const cache=(caches as unknown as {default:Cache}).default;for(const key of await cache.keys())if(new URL(key.url).pathname.startsWith('/api/public/'))await cache.delete(key)}catch{/* Cache API is unavailable in local test runtimes. */}}
 
 async function tagsFor(db:D1Database,noteId:string) {
   const result=await db.prepare('SELECT t.id,t.name FROM tags t JOIN note_tags nt ON nt.tag_id=t.id WHERE nt.note_id=? ORDER BY t.name').bind(noteId).all<{id:string;name:string}>();
@@ -33,7 +39,7 @@ function baseFilters(url:URL,user:SessionUser) {
 }
 function safeFtsQuery(q:string) { return q.trim().split(/\s+/).filter(Boolean).map(word=>`"${word.replaceAll('"','""')}"*`).join(' AND '); }
 async function readNote(db:D1Database,user:SessionUser,noteId:string,key:CryptoKey) {
-  const row=await db.prepare('SELECT * FROM notes WHERE id=? AND user_id=?').bind(noteId,user.id).first<NoteRow>();
+  const row=await db.prepare('SELECT * FROM notes WHERE (id=? OR short_code=?) AND user_id=?').bind(noteId,noteId,user.id).first<NoteRow>();
   if(!row)return error('Note not found',404);
   return json(await decode(row,key,db));
 }
@@ -81,8 +87,17 @@ export async function handleNotes(request:Request,env:NotesEnv,user:SessionUser,
     const folderId=typeof input.folder_id==='string'&&input.folder_id?input.folder_id:null;
     if(folderId&&!await ownedFolder(db,folderId,user.id))return error('Folder not found',404);
     const now=Date.now(),noteId=newId(),key=await getEncryptionKey(env.ENCRYPTION_KEY);
-    await db.prepare('INSERT INTO notes(id,user_id,folder_id,title,body_md,created_at,updated_at) VALUES(?,?,?,?,?,?,?)').bind(noteId,user.id,folderId,typeof input.title==='string'?input.title.slice(0,500):'',await encryptText(input.body_md,key),now,now).run();
-    return readNote(db,user,noteId,key).then(async response=>new Response(response.body,{status:201,headers:response.headers}));
+    for(let attempt=0;attempt<5;attempt++) {
+      const shortCode=generateShortCode();
+      try {
+        await db.prepare('INSERT INTO notes(id,user_id,folder_id,title,body_md,created_at,updated_at,short_code) VALUES(?,?,?,?,?,?,?,?)').bind(noteId,user.id,folderId,typeof input.title==='string'?input.title.slice(0,500):'',await encryptText(input.body_md,key),now,now,shortCode).run();
+        const response=await readNote(db,user,noteId,key);
+        return new Response(response.body,{status:201,headers:response.headers});
+      } catch(error) {
+        if(attempt===4) throw error;
+      }
+    }
+    return error('Could not generate a unique note link',500);
   }
   if(path==='/api/notes/:id'&&request.method==='GET')return readNote(db,user,url.pathname.split('/').pop()!,await getEncryptionKey(env.ENCRYPTION_KEY));
   if(path==='/api/notes/:id'&&request.method==='PATCH') {
@@ -94,6 +109,7 @@ export async function handleNotes(request:Request,env:NotesEnv,user:SessionUser,
     if(input.body_md!==undefined&&(typeof input.body_md!=='string'||input.body_md.length>MAX_BODY))return error('Invalid note body');
     const nextTitle=input.title===undefined?row.title:(typeof input.title==='string'?input.title.slice(0,500):row.title);
     const contentChanged=nextTitle!==row.title||(input.body_md!==undefined&&input.body_md!==await decryptText(row.body_md,await getEncryptionKey(env.ENCRYPTION_KEY)));
+    if(input.trashed_at&&row.trashed_at===null)try{await db.prepare('UPDATE note_shares SET revoked_at=? WHERE note_id=? AND user_id=? AND revoked_at IS NULL').bind(Date.now(),noteId,user.id).run()}catch{/* Migration 0009 may not be applied during rolling deploys. */}
     if(contentChanged||input.force_snapshot===true)await maybeSnapshotNote(env,db,row,{force:input.force_snapshot===true});
     const folderId=input.folder_id===undefined?row.folder_id:(typeof input.folder_id==='string'&&input.folder_id?input.folder_id:null);
     if(folderId&&!await ownedFolder(db,folderId,user.id))return error('Folder not found',404);
@@ -105,10 +121,12 @@ export async function handleNotes(request:Request,env:NotesEnv,user:SessionUser,
       await db.prepare('DELETE FROM note_tags WHERE note_id=?').bind(noteId).run();
       for(const tagId of ids)await db.prepare('INSERT OR IGNORE INTO note_tags(note_id,tag_id) SELECT ?,id FROM tags WHERE id=? AND user_id=?').bind(noteId,tagId,user.id).run();
     }
+    if(contentChanged||input.trashed_at!==undefined||input.archived_at!==undefined)await purgePublicCache();
     return readNote(db,user,noteId,key);
   }
   if(path==='/api/notes/:id'&&request.method==='DELETE') {
     const noteId=url.pathname.split('/').pop()!;
+    await purgePublicCache();
     await db.prepare('DELETE FROM note_revisions WHERE note_id=? AND user_id=?').bind(noteId,user.id).run();
     const result=await db.prepare('DELETE FROM notes WHERE id=? AND user_id=?').bind(noteId,user.id).run();
     if(result.meta.changes) try { await db.prepare("INSERT INTO sync_tombstones(id,user_id,entity_type,entity_id,deleted_at) VALUES(?,?,'note',?,?)").bind(newId(),user.id,noteId,Date.now()).run(); } catch { /* Older local databases may not have applied migration 0008 yet. */ }

@@ -31,6 +31,13 @@ export class ApiError extends Error {
 
 export const UNAUTHORIZED_EVENT = 'inotion:unauthorized'
 
+export const createNoteShare = (noteId: Id, snapshot: {ciphertext_b64:string;iv_b64:string;expires_at:number|null}) => request<{id:string;expires_at:number|null;created_at:number}>(`/api/notes/${encodeURIComponent(String(noteId))}/shares`,json('POST',snapshot))
+export interface NoteShareRecord { id:string; expires_at:number|null; revoked_at:number|null; created_at:number }
+export const listNoteShares = (noteId:Id) => request<NoteShareRecord[]>(`/api/notes/${encodeURIComponent(String(noteId))}/shares`)
+export const revokeNoteShare = (shareId:string) => request<{ok:true}>(`/api/shares/${encodeURIComponent(shareId)}`,{method:'DELETE'})
+export const publishFolder = (folderId: Id, slug:string, include_subfolders=false) => request<{slug:string}>(`/api/folders/${encodeURIComponent(String(folderId))}/publish`,json('PUT',{slug,include_subfolders}))
+export const unpublishFolder = (folderId:Id) => request<{ok:true}>(`/api/folders/${encodeURIComponent(String(folderId))}/publish`,{method:'DELETE'})
+
 const SILENT_401 = ['/api/auth/login', '/api/auth/me', '/api/auth/change-password']
 
 function defaultMessage(status: number): string {

@@ -231,7 +231,7 @@ export function Workspace({ email, onSignOut }: WorkspaceProps) {
           : { kind: 'notes' }
       if (target === route) addNote(note)
       void mutateTags()
-      navigate(withNote(target, note.id))
+      navigate(withNote(target, note.id, note.short_code))
     } catch (e) {
       setCreateError(errorMessage(e) ?? 'Could not create the note.')
     } finally {
@@ -577,7 +577,7 @@ export function Workspace({ email, onSignOut }: WorkspaceProps) {
                 attachmentCounts={attachmentCounts}
                 scopeLabel={scopeLabel}
                 creating={creating}
-                onSelect={(n) => navigate(withNote(route, n.id))}
+                onSelect={(n) => navigate(withNote(route, n.id, n.short_code))}
                 onRetry={list.reload}
                 onLoadMore={list.loadMore}
                 onNewNote={newNote}

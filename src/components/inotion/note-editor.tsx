@@ -10,6 +10,7 @@ import {
   MoreHorizontal,
   Pin,
   RotateCcw,
+  Share2,
   Trash2,
   TriangleAlert,
 } from 'lucide-react'
@@ -28,7 +29,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Spinner } from '@/components/ui/spinner'
-import { ApiError, deleteNote, getNote, getNoteRevision, listNoteRevisions, patchNote, restoreNote, restoreNoteRevision } from '@/lib/inotion/api'
+import { ApiError, createNoteShare, deleteNote, getNote, getNoteRevision, listNoteRevisions, patchNote, restoreNote, restoreNoteRevision } from '@/lib/inotion/api'
 import { flattenFolders } from '@/lib/inotion/folders'
 import { formatFullDate } from '@/lib/inotion/format'
 import {
@@ -51,6 +52,8 @@ import { MarkdownPreview } from './markdown-preview'
 import { RichMarkdownEditor } from '../RichMarkdownEditor'
 import { RevisionHistoryDrawer } from '../RevisionHistoryDrawer'
 import { exportNote } from '@/utils/exportFormats'
+import { ShareButton } from '@/components/share-button'
+import { listNoteShares, revokeNoteShare } from '@/lib/inotion/api'
 
 type SaveStatus = 'saved' | 'dirty' | 'saving' | 'error' | 'conflict'
 
@@ -137,6 +140,43 @@ export function NoteEditor({
   const [conflictResolving, setConflictResolving] = useState(false)
   const [conflictError, setConflictError] = useState<string | null>(null)
   const [confirmDelete, setConfirmDelete] = useState(false)
+  const [shareRecords, setShareRecords] = useState<{id:string;url:string;createdAt:number;expiresAt:number|null}[]>([])
+  const [shareLoading, setShareLoading] = useState(false)
+
+  const loadShares = async () => {
+    setShareLoading(true)
+    try { const rows=await listNoteShares(note.id);setShareRecords(rows.filter(row=>!row.revoked_at).map(row=>({id:row.id,url:sessionStorage.getItem(`inotion-share:${row.id}`) || `${location.origin}/s/${row.id}`,createdAt:row.created_at,expiresAt:row.expires_at}))) }
+    finally { setShareLoading(false) }
+  }
+  const createShareFromModal = async (expiry: '24h'|'7d'|'30d'|'never') => {
+    await flushRef.current()
+    const durations:Record<string,number>={'24h':86400000,'7d':604800000,'30d':2592000000}
+    const key=await crypto.subtle.generateKey({name:'AES-GCM',length:256},true,['encrypt']),iv=crypto.getRandomValues(new Uint8Array(12))
+    const encrypted=await crypto.subtle.encrypt({name:'AES-GCM',iv},key,new TextEncoder().encode(JSON.stringify({title:draftRef.current.title,body_md:draftRef.current.body})))
+    const b64=(data:Uint8Array)=>btoa(String.fromCharCode(...data)),raw=new Uint8Array(await crypto.subtle.exportKey('raw',key))
+    const created=await createNoteShare(note.id,{ciphertext_b64:b64(new Uint8Array(encrypted)),iv_b64:b64(iv),expires_at:expiry==='never'?null:Date.now()+durations[expiry]})
+    const url=`${location.origin}/s/${created.id}#${b64(raw)}`
+    sessionStorage.setItem(`inotion-share:${created.id}`,url)
+    setShareRecords(current=>[{id:created.id,url,createdAt:created.created_at,expiresAt:created.expires_at},...current])
+    await navigator.clipboard.writeText(url)
+  }
+
+  const createShareLink = async () => {
+    try {
+      await flushRef.current()
+      const duration=window.prompt('Link expires in: 24h, 7d, 30d, or never','7d')?.trim().toLowerCase()
+      if(!duration)return
+      const ms:Record<string,number>={'24h':86400000,'7d':604800000,'30d':2592000000}
+      if(duration!=='never'&&!ms[duration])throw new Error('Choose 24h, 7d, 30d, or never.')
+      const key=await crypto.subtle.generateKey({name:'AES-GCM',length:256},true,['encrypt']),iv=crypto.getRandomValues(new Uint8Array(12))
+      const bytes=await crypto.subtle.encrypt({name:'AES-GCM',iv},key,new TextEncoder().encode(JSON.stringify({title:draftRef.current.title,body_md:draftRef.current.body})))
+      const b64=(data:Uint8Array)=>btoa(String.fromCharCode(...data))
+      const raw=new Uint8Array(await crypto.subtle.exportKey('raw',key)),cipher=new Uint8Array(bytes)
+      const created=await createNoteShare(note.id,{ciphertext_b64:b64(cipher),iv_b64:b64(iv),expires_at:duration==='never'?null:Date.now()+ms[duration]})
+      const link=`${location.origin}/s/${created.id}#${b64(raw)}`
+      await navigator.clipboard.writeText(link);setActionError('Encrypted share link copied to clipboard.')
+    } catch(e) {setActionError(e instanceof Error?e.message:'Could not create share link.')}
+  }
 
   const draftRef = useRef({ title: note.title, body: note.body_md })
   const savedRef = useRef({ title: note.title, body: note.body_md })
@@ -356,6 +396,7 @@ export function NoteEditor({
 
         {!readOnly && (
           <>
+            <ShareButton noteTitle={title} links={shareRecords} isLoading={shareLoading} onOpen={() => { void loadShares() }} onCreate={createShareFromModal} onRevoke={async id => { await revokeNoteShare(id);setShareRecords(current=>current.filter(link=>link.id!==id)) }} />
             <button type="button" onClick={()=>setHistoryOpen(true)} className="rounded border px-2 py-1 text-xs">History</button>
             <button
               type="button"
@@ -404,6 +445,7 @@ export function NoteEditor({
             </button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-56">
+            {!note.trashed_at && <DropdownMenuItem onSelect={() => void createShareLink()}><Share2 aria-hidden="true" /> Create encrypted share link</DropdownMenuItem>}
             <DropdownMenuItem onSelect={exportThisNote}>
               <Download aria-hidden="true" /> Export note as JSON
             </DropdownMenuItem>

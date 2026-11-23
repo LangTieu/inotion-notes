@@ -7,6 +7,7 @@ export interface NoteTag {
 
 export interface Note {
   id: Id
+  short_code?: string
   folder_id: Id | null
   title: string
   body_md: string

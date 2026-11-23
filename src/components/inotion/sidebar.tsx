@@ -20,7 +20,7 @@ import {
   FolderInput,
   KeyRound,
 } from 'lucide-react'
-import { ApiError, changePassword } from '@/lib/inotion/api'
+import { ApiError, changePassword, publishFolder } from '@/lib/inotion/api'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import {
   DropdownMenu,
@@ -38,6 +38,7 @@ import { cn } from '@/lib/utils'
 import { ConfirmDialog } from './confirm-dialog'
 import { ErrorBox } from './state-views'
 import { SecurityModal } from './security-modal'
+import { PublishFolderDialog } from '@/components/publish-folder-dialog'
 
 export interface SidebarProps {
   route: Route
@@ -203,6 +204,7 @@ export function Sidebar({
   const [shortcut, setShortcut] = useState('Ctrl K')
   const [passwordDialogOpen, setPasswordDialogOpen] = useState(false)
   const [securityOpen, setSecurityOpen] = useState(false)
+  const [publishTarget, setPublishTarget] = useState<Folder | null>(null)
   const [currentPassword, setCurrentPassword] = useState('')
   const [newPassword, setNewPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
@@ -335,6 +337,9 @@ export function Sidebar({
               </DropdownMenuItem>
               <DropdownMenuItem onSelect={() => onMoveFolder(node.folder)}>
                 <FolderInput aria-hidden="true" /> Change parent
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => setPublishTarget(node.folder)}>
+                <FolderIcon aria-hidden="true" /> Publish notebook…
               </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem
@@ -529,6 +534,14 @@ export function Sidebar({
           if (folderToDelete) await onDeleteFolder(folderToDelete)
         }}
       />
+      <PublishFolderDialog open={!!publishTarget} onOpenChange={(open) => !open && setPublishTarget(null)} folderName={publishTarget?.name ?? ''} onConfirm={async () => {
+        if (!publishTarget) return
+        const slug = window.prompt('Public notebook URL slug')?.trim()
+        if (!slug) throw new Error('A URL slug is required.')
+        await publishFolder(publishTarget.id, slug, window.confirm('Include subfolders?'))
+        window.alert(`Published at ${location.origin}/p/${slug}`)
+        setPublishTarget(null)
+      }} />
       <ConfirmDialog
         open={!!tagToDelete}
         onOpenChange={(o) => !o && setTagToDelete(null)}

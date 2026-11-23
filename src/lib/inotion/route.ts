@@ -143,9 +143,9 @@ export function useRoute(): Route {
   return useMemo(() => parseRoute(window.location.pathname, window.location.search), [url])
 }
 
-export const withNote = (route: Route, noteId: Id): Route => ({
+export const withNote = (route: Route, noteId: Id, shortCode?: string): Route => ({
   ...route,
-  noteId: String(noteId),
+  noteId: shortCode || String(noteId),
 })
 
 export const withoutNote = (route: Route): Route => {

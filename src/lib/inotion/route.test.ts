@@ -5,6 +5,8 @@ afterEach(() => vi.unstubAllGlobals())
 
 describe('pathname routes', () => {
   it('parses path, note, and search scope parameters', () => {
+    expect(parseRoute('/notes/Ab3dE9xZ')).toEqual({ kind: 'notes', noteId: 'Ab3dE9xZ' })
+    expect(parseRoute('/notes/123e4567-e89b-12d3-a456-426614174000')).toEqual({ kind: 'notes', noteId: '123e4567-e89b-12d3-a456-426614174000' })
     expect(parseRoute('/folder/f%20one', '?note=n1')).toEqual({
       kind: 'folder', id: 'f one', noteId: 'n1',
     })
@@ -12,6 +14,11 @@ describe('pathname routes', () => {
       kind: 'search', q: 'hello world', noteId: 'n2',
       scope: { view: 'archived', folder: undefined, tag: 't1' },
     })
+  })
+
+  it('uses a note short code when building the open note route', async () => {
+    const { withNote } = await import('./route')
+    expect(withNote({ kind: 'notes' }, 'uuid', 'abc123XY')).toEqual({ kind: 'notes', noteId: 'abc123XY' })
   })
 
   it('navigates to a clean URL and notifies popstate subscribers', () => {
