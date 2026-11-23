@@ -55,7 +55,7 @@ export function validMutationOrigin(request: Request): boolean {
   if (!origin) return false;
   try {
     const parsed = new URL(origin);
-    return origin === 'https://inotion.eu.cc' || (['localhost', '127.0.0.1'].includes(parsed.hostname) && ['http:', 'https:'].includes(parsed.protocol));
+    return ['https://inotion.eu.cc', 'https://notes.inotion.eu.cc'].includes(origin) || (['localhost', '127.0.0.1'].includes(parsed.hostname) && ['http:', 'https:'].includes(parsed.protocol));
   } catch { return false; }
 }
 export async function currentSession(request: Request, env: AuthEnv): Promise<SessionUser | null> {
