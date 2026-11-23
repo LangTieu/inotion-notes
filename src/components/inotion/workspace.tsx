@@ -536,12 +536,6 @@ export function Workspace({ email, onSignOut }: WorkspaceProps) {
 
   return (
     <div className="flex h-dvh overflow-hidden bg-background text-foreground">
-      <div className="fixed right-3 top-3 z-20 flex items-center gap-2">
-        <button type="button" className="rounded-md border bg-background px-3 py-2 text-xs shadow-sm" onClick={() => setApiMcpOpen(true)}>API / MCP</button>
-        <SyncStatusPill status={syncLabel === 'Syncing…' ? 'syncing' : !isOnline || syncLabel.includes('unsynced') ? 'offline' : 'synced'} unsyncedCount={Number(syncLabel.match(/\d+/)?.[0] ?? 0)} onRetry={() => void syncNow()} />
-        <UrlClipperDialog fetchPreview={(url) => p10Api.clipUrl(url)} onSave={saveClip} />
-        <button type="button" className="rounded-md border bg-background px-3 py-2 text-xs shadow-sm" onClick={() => setImportExportOpen(true)}>Import / Export</button>
-      </div>
       <ApiMcpModal open={apiMcpOpen} onOpenChange={setApiMcpOpen} />
       <ImportExportModal
         open={importExportOpen}
@@ -560,6 +554,12 @@ export function Workspace({ email, onSignOut }: WorkspaceProps) {
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">
+        <div className="flex w-full shrink-0 flex-nowrap items-center gap-2 overflow-x-auto px-3 py-2">
+          <button type="button" className="shrink-0 whitespace-nowrap rounded-md border bg-background px-3 py-2 text-xs shadow-sm" onClick={() => setApiMcpOpen(true)}>API / MCP</button>
+          <div className="shrink-0"><SyncStatusPill status={syncLabel === 'Syncing…' ? 'syncing' : !isOnline || syncLabel.includes('unsynced') ? 'offline' : 'synced'} unsyncedCount={Number(syncLabel.match(/\d+/)?.[0] ?? 0)} onRetry={() => void syncNow()} /></div>
+          <div className="shrink-0"><UrlClipperDialog fetchPreview={(url) => p10Api.clipUrl(url)} onSave={saveClip} /></div>
+          <button type="button" className="shrink-0 whitespace-nowrap rounded-md border bg-background px-3 py-2 text-xs shadow-sm" onClick={() => setImportExportOpen(true)}>Import / Export</button>
+        </div>
         {!isOnline && <div role="status" className="border-b border-border bg-secondary px-4 py-2 text-xs text-muted-foreground">Offline mode: cached notes are available; attachments require an internet connection.</div>}
         {isSearch && (
           <div className={cn(noteId && 'max-md:hidden')}>
