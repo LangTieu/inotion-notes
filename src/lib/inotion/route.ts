@@ -5,6 +5,7 @@ export type RouteKind =
   | 'notes'
   | 'pinned'
   | 'archived'
+  | 'reminders'
   | 'trash'
   | 'folder'
   | 'tag'
@@ -41,6 +42,8 @@ export function parseRoute(path: string, search = ''): Route {
       return { kind: 'pinned', noteId: noteParam }
     case 'archived':
       return { kind: 'archived', noteId: noteParam }
+    case 'reminders':
+      return { kind: 'reminders', noteId: noteParam }
     case 'trash':
       return { kind: 'trash', noteId: noteParam }
     case 'folder':
@@ -84,6 +87,9 @@ export function routeToUrl(route: Route): string {
       break
     case 'archived':
       path = '/archived'
+      break
+    case 'reminders':
+      path = '/reminders'
       break
     case 'trash':
       path = '/trash'
@@ -188,6 +194,8 @@ export function openSearchRoute(from: Route): Route {
 /** The backend query for a route, or null when nothing should be fetched. */
 export function routeToQuery(route: Route): NotesQuery | null {
   switch (route.kind) {
+    case 'reminders':
+      return null
     case 'notes':
     case 'pinned':
       return { view: 'all' }

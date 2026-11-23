@@ -57,6 +57,11 @@ import * as offlineDb from '@/offline/db'
 import { cacheEnabled, syncNow } from '@/offline/syncEngine'
 import { SyncStatusPill } from '@/components/SyncStatusPill'
 import { OfflineEmptyState } from '@/components/OfflineEmptyState'
+import { api as p10Api } from '@/api'
+import { RemindersView } from '@/components/reminders-view'
+import { ReminderNotifier } from '@/components/reminder-notifier'
+import { UrlClipperDialog, type ClipPreview } from '@/components/url-clipper-dialog'
+import type { ReminderNote } from '@/components/reminder-utils'
 
 interface WorkspaceProps {
   email: string
@@ -131,6 +136,15 @@ export function Workspace({ email, onSignOut }: WorkspaceProps) {
   }
 
   const list = useNotesList(route)
+  const remindersSwr = useSWR<{upcoming: any[]; overdue: any[]}>(['p10-reminders'], p10Api.getReminders, {
+    revalidateOnFocus: false,
+    shouldRetryOnError: false,
+  })
+  const reminderNotes: ReminderNote[] = [...(remindersSwr.data?.overdue ?? []), ...(remindersSwr.data?.upcoming ?? [])].map((note) => ({
+    id: String(note.id),
+    title: String(note.title ?? ''),
+    reminderAt: note.reminderAt ?? note.reminder_at ?? null,
+  }))
 
   /* ---- open note ---- */
   const noteId = route.noteId
@@ -302,6 +316,8 @@ export function Workspace({ email, onSignOut }: WorkspaceProps) {
         return 'Pinned'
       case 'archived':
         return 'Archived'
+      case 'reminders':
+        return 'Reminders'
       case 'trash':
         return 'Trash'
       case 'folder':
@@ -347,6 +363,23 @@ export function Workspace({ email, onSignOut }: WorkspaceProps) {
     onDeleteTag: removeTag,
     onExport: exportAll,
     onSignOut,
+    reminderNotes,
+  }
+
+  const saveClip = async (clip: ClipPreview) => {
+    const sourceUrl = clip.url
+    const body = [clip.description?.trim(), clip.content?.trim(), `Source: ${sourceUrl}`]
+      .filter(Boolean)
+      .join('\n\n')
+    const note = await createNote({ title: clip.title, body_md: body })
+    void mutateTags()
+    navigate(withNote({ kind: 'notes' }, note.id, note.short_code))
+  }
+
+  const openReminderNote = (id: string) => navigate(withNote({ kind: 'reminders' }, id))
+  const clearReminder = async (id: string) => {
+    await p10Api.setReminder(id, null)
+    await remindersSwr.mutate()
   }
 
   const mobileBack = () => navigate(withoutNote(route))
@@ -503,6 +536,7 @@ export function Workspace({ email, onSignOut }: WorkspaceProps) {
     <div className="flex h-dvh overflow-hidden bg-background text-foreground">
       <div className="fixed right-3 top-3 z-20 flex items-center gap-2">
         <SyncStatusPill status={syncLabel === 'Syncing…' ? 'syncing' : !isOnline || syncLabel.includes('unsynced') ? 'offline' : 'synced'} unsyncedCount={Number(syncLabel.match(/\d+/)?.[0] ?? 0)} onRetry={() => void syncNow()} />
+        <UrlClipperDialog fetchPreview={(url) => p10Api.clipUrl(url)} onSave={saveClip} />
         <button type="button" className="rounded-md border bg-background px-3 py-2 text-xs shadow-sm" onClick={() => setImportExportOpen(true)}>Import / Export</button>
       </div>
       <ImportExportModal
@@ -513,6 +547,7 @@ export function Workspace({ email, onSignOut }: WorkspaceProps) {
         onExportJson={async () => { await exportAllAsJson() }}
         onExportMarkdownZip={onExportMarkdownZip}
       />
+      <ReminderNotifier notes={reminderNotes} onOpenNote={openReminderNote} />
       <aside
         aria-label="Sidebar"
         className="hidden w-64 shrink-0 border-r border-sidebar-border md:flex xl:w-72"
@@ -558,12 +593,23 @@ export function Workspace({ email, onSignOut }: WorkspaceProps) {
                 onNewNote={newNote}
               />
             )}
+            {route.kind === 'reminders' && (
+              <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+                {remindersSwr.error ? (
+                  <ErrorBox message={errorMessage(remindersSwr.error) ?? 'Could not load reminders.'} />
+                ) : remindersSwr.isLoading ? (
+                  <div className="p-4 text-sm text-muted-foreground">Loading reminders…</div>
+                ) : (
+                  <RemindersView notes={reminderNotes} onOpenNote={openReminderNote} onClearReminder={(id) => void clearReminder(id)} />
+                )}
+              </div>
+            )}
             {createError && (
               <div className="px-3 pt-3">
                 <ErrorBox message={createError} />
               </div>
             )}
-            <div className="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain">
+            {route.kind !== 'reminders' && <div className="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain">
               {!isOnline && list.items.length === 0 && !list.isLoading ? <OfflineEmptyState cachedNoteCount={cachedNoteCount} unsyncedCount={Number(syncLabel.match(/\d+/)?.[0] ?? 0)} onRetry={() => void syncNow()} /> : <NoteList
                 route={route}
                 items={list.items}
@@ -582,7 +628,7 @@ export function Workspace({ email, onSignOut }: WorkspaceProps) {
                 onLoadMore={list.loadMore}
                 onNewNote={newNote}
               />}
-            </div>
+            </div>}
           </section>
 
           <section

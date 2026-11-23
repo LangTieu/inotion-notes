@@ -39,6 +39,8 @@ import { ConfirmDialog } from './confirm-dialog'
 import { ErrorBox } from './state-views'
 import { SecurityModal } from './security-modal'
 import { PublishFolderDialog } from '@/components/publish-folder-dialog'
+import { RemindersNavItem } from '@/components/reminders-nav-item'
+import type { ReminderNote } from '@/components/reminder-utils'
 
 export interface SidebarProps {
   route: Route
@@ -57,6 +59,7 @@ export interface SidebarProps {
   onExport: () => Promise<void>
   onSignOut: () => Promise<void>
   className?: string
+  reminderNotes: ReminderNote[]
 }
 
 const rowBase =
@@ -194,6 +197,7 @@ export function Sidebar({
   onExport,
   onSignOut,
   className,
+  reminderNotes,
 }: SidebarProps) {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
   const [folderToDelete, setFolderToDelete] = useState<Folder | null>(null)
@@ -395,6 +399,14 @@ export function Sidebar({
               />
             </li>
           ))}
+          <li>
+            <RemindersNavItem
+              notes={reminderNotes}
+              active={route.kind === 'reminders'}
+              onSelect={() => onNavigate({ kind: 'reminders' })}
+              className="px-2 py-1"
+            />
+          </li>
         </ul>
 
         <SectionHeader
