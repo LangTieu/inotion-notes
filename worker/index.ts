@@ -8,6 +8,8 @@ import { handleSync } from './sync';
 import { handlePublic, handleShareApi, publicTrafficLimited } from './share';
 import { handleReminders } from './reminders';
 import { handleClip } from './clips';
+import { handleTokens } from './tokens';
+import { handleMcp } from './mcp';
 
 interface Env extends AuthEnv, AttachmentEnv { ASSETS: Fetcher; }
 const json = (body: unknown, status = 200, headers: HeadersInit = {}) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', ...headers } });
@@ -93,6 +95,11 @@ async function changePassword(request: Request, env: Env): Promise<Response> {
 async function route(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url), path = url.pathname.replace(/\/+$/, '') || '/';
   if (path === '/api/config' && request.method === 'GET') return json({ app: 'inotion-notes', auth: 'email-password' });
+  if (path === '/api/mcp') return handleMcp(request,env);
+  if (path === '/api/tokens' || path.startsWith('/api/tokens/')) {
+    if (['POST','DELETE'].includes(request.method) && !validMutationOrigin(request)) return error('Invalid request origin',403);
+    return handleTokens(request,env,path);
+  }
   if (path.startsWith('/api/public/')) return await handlePublic(request,env,path) || error('Not found',404);
   if (path.startsWith('/api/notes/') && path.endsWith('/shares') || /^\/api\/shares\//.test(path) || /^\/api\/folders\/[^/]+\/publish$/.test(path)) {
     if (['POST','PUT','DELETE'].includes(request.method) && !validMutationOrigin(request)) return error('Invalid request origin',403);

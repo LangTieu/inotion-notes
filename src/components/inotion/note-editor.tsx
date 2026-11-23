@@ -55,6 +55,7 @@ import { exportNote } from '@/utils/exportFormats'
 import { ShareButton } from '@/components/share-button'
 import { listNoteShares, revokeNoteShare } from '@/lib/inotion/api'
 import { ReminderPopover } from '@/components/reminder-popover'
+import { AiAssistantPanel } from '@/components/ai-assistant-panel'
 
 type SaveStatus = 'saved' | 'dirty' | 'saving' | 'error' | 'conflict'
 
@@ -132,6 +133,8 @@ export function NoteEditor({
   const [title, setTitle] = useState(note.title)
   const [body, setBody] = useState(note.body_md)
   const [focusMode, setFocusMode] = useState(false)
+  const [aiOpen, setAiOpen] = useState(false)
+  const [aiSelection, setAiSelection] = useState({ start: 0, end: 0, text: '' })
   const [historyOpen,setHistoryOpen]=useState(false)
   const [status, setStatus] = useState<SaveStatus>('saved')
   const [saveError, setSaveError] = useState<string | null>(null)
@@ -400,6 +403,7 @@ export function NoteEditor({
             <ShareButton noteTitle={title} links={shareRecords} isLoading={shareLoading} onOpen={() => { void loadShares() }} onCreate={createShareFromModal} onRevoke={async id => { await revokeNoteShare(id);setShareRecords(current=>current.filter(link=>link.id!==id)) }} />
             <ReminderPopover variant="toolbar" reminderAt={note.reminder_at} onChange={value => { void (async () => { try { const updated = await patchNote(note.id, revisionRef.current, { reminder_at: value }); revisionRef.current = updated.revision; onUpdatedRef.current(updated) } catch (error) { setSaveError(error instanceof Error ? error.message : 'Could not update reminder.') } })() }} />
             <button type="button" onClick={()=>setHistoryOpen(true)} className="rounded border px-2 py-1 text-xs">History</button>
+            <button type="button" onClick={() => setAiOpen((open) => !open)} aria-expanded={aiOpen} className="rounded border px-2 py-1 text-xs">AI assistant</button>
             <button
               type="button"
               onClick={() => applyMeta('pin', { is_pinned: !note.is_pinned })}
@@ -586,7 +590,7 @@ export function NoteEditor({
 
       <div className={cn('min-h-0 flex-1 border-t border-border', focusMode && 'fixed inset-0 z-40 flex flex-col border-0 bg-background')}>
         <div className="h-full min-h-0">
-            <RichMarkdownEditor value={body} onChange={changeBody} disabled={readOnly} focusMode={focusMode} onToggleFocusMode={()=>setFocusMode(value=>!value)} renderPreview={(md,onToggleCheckbox)=><MarkdownPreview source={md} onToggleTask={readOnly?undefined:(line)=>onToggleCheckbox(line)}/>}/>
+            <RichMarkdownEditor value={body} onChange={changeBody} disabled={readOnly} focusMode={focusMode} onToggleFocusMode={()=>setFocusMode(value=>!value)} onSelectionChange={(text,start,end)=>setAiSelection({text,start,end})} renderPreview={(md,onToggleCheckbox)=><MarkdownPreview source={md} onToggleTask={readOnly?undefined:(line)=>onToggleCheckbox(line)}/>}/>
             {body.length > MAX_BODY - 5000 && (
               <p className="px-4 pb-2 text-xs text-muted-foreground md:px-8">
                 {body.length.toLocaleString('en-US')} / {MAX_BODY.toLocaleString('en-US')} characters
@@ -594,6 +598,8 @@ export function NoteEditor({
             )}
         </div>
       </div>
+
+      {aiOpen && !readOnly && !focusMode && <div className="h-80 shrink-0 border-t border-border"><AiAssistantPanel noteTitle={title} noteText={body} selectedText={aiSelection.text} onInsertBelow={(text)=>changeBody(`${body}\n\n${text}`)} onReplaceSelection={(text)=>{if(aiSelection.end>aiSelection.start)changeBody(body.slice(0,aiSelection.start)+text+body.slice(aiSelection.end));setAiSelection({start:0,end:0,text:''})}} onClose={()=>setAiOpen(false)} /></div>}
 
       <AttachmentsPanel
         noteId={note.id}

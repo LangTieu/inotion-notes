@@ -62,6 +62,7 @@ import { RemindersView } from '@/components/reminders-view'
 import { ReminderNotifier } from '@/components/reminder-notifier'
 import { UrlClipperDialog, type ClipPreview } from '@/components/url-clipper-dialog'
 import type { ReminderNote } from '@/components/reminder-utils'
+import { ApiMcpModal } from '@/components/api-mcp-modal'
 
 interface WorkspaceProps {
   email: string
@@ -83,6 +84,7 @@ export function Workspace({ email, onSignOut }: WorkspaceProps) {
   const [syncLabel, setSyncLabel] = useState('All synced')
   const [isOnline, setIsOnline] = useState(navigator.onLine)
   const [cachedNoteCount, setCachedNoteCount] = useState(0)
+  const [apiMcpOpen, setApiMcpOpen] = useState(false)
 
   useEffect(() => {
     let active = true
@@ -535,10 +537,12 @@ export function Workspace({ email, onSignOut }: WorkspaceProps) {
   return (
     <div className="flex h-dvh overflow-hidden bg-background text-foreground">
       <div className="fixed right-3 top-3 z-20 flex items-center gap-2">
+        <button type="button" className="rounded-md border bg-background px-3 py-2 text-xs shadow-sm" onClick={() => setApiMcpOpen(true)}>API / MCP</button>
         <SyncStatusPill status={syncLabel === 'Syncing…' ? 'syncing' : !isOnline || syncLabel.includes('unsynced') ? 'offline' : 'synced'} unsyncedCount={Number(syncLabel.match(/\d+/)?.[0] ?? 0)} onRetry={() => void syncNow()} />
         <UrlClipperDialog fetchPreview={(url) => p10Api.clipUrl(url)} onSave={saveClip} />
         <button type="button" className="rounded-md border bg-background px-3 py-2 text-xs shadow-sm" onClick={() => setImportExportOpen(true)}>Import / Export</button>
       </div>
+      <ApiMcpModal open={apiMcpOpen} onOpenChange={setApiMcpOpen} />
       <ImportExportModal
         open={importExportOpen}
         onClose={() => setImportExportOpen(false)}

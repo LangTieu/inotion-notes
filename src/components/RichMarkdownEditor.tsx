@@ -21,6 +21,7 @@ export interface RichMarkdownEditorProps {
     md: string,
     onToggleCheckbox: (lineIndex: number) => void,
   ) => ReactNode
+  onSelectionChange?: (text: string, start: number, end: number) => void
 }
 
 /* ---------- Pure Markdown edit helpers (never touch anything outside the selection / touched lines) ---------- */
@@ -315,6 +316,7 @@ export function RichMarkdownEditor({
   focusMode,
   onToggleFocusMode,
   renderPreview,
+  onSelectionChange,
 }: RichMarkdownEditorProps) {
   const [mode, setMode] = useState<Mode>('markdown')
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -377,6 +379,8 @@ export function RichMarkdownEditor({
       ref={textareaRef}
       value={value}
       onChange={(e) => onChange(e.target.value)}
+      onSelect={(e) => onSelectionChange?.(e.currentTarget.value.slice(e.currentTarget.selectionStart, e.currentTarget.selectionEnd), e.currentTarget.selectionStart, e.currentTarget.selectionEnd)}
+      onKeyUp={(e) => onSelectionChange?.(e.currentTarget.value.slice(e.currentTarget.selectionStart, e.currentTarget.selectionEnd), e.currentTarget.selectionStart, e.currentTarget.selectionEnd)}
       onKeyDown={handleKeyDown}
       readOnly={disabled}
       spellCheck

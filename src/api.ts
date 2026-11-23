@@ -38,4 +38,7 @@ export const api = {
   attachments: (noteId:string) => request<{attachments:any[]}>(`/api/notes/${noteId}/attachments`),
   uploadAttachment: (noteId:string,file:File) => { const form=new FormData();form.set('file',file);return request<any>(`/api/notes/${noteId}/attachments`,{method:'POST',headers:{Origin:location.origin},body:form}); },
   deleteAttachment: (id:string) => request<any>(`/api/attachments/${id}`,{method:'DELETE',headers:{Origin:location.origin}}),
+  listTokens: () => request<any[]>('/api/tokens'),
+  createToken: (name:string,scopes:('read'|'write'|'delete')[],expires_at?:number|null) => request<any>('/api/tokens',{method:'POST',headers:{Origin:location.origin},body:JSON.stringify({name,scopes,...(expires_at!==undefined?{expires_at}:{})})}),
+  revokeToken: (id:string) => request<{ok:true}>(`/api/tokens/${encodeURIComponent(id)}`,{method:'DELETE',headers:{Origin:location.origin}}),
 };
