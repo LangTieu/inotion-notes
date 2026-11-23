@@ -13,6 +13,10 @@
     {
       "pattern": "inotion.eu.cc",
       "custom_domain": true
+    },
+    {
+      "pattern": "notes.inotion.eu.cc",
+      "custom_domain": true
     }
   ],
   "d1_databases": [
