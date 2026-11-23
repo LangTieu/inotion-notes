@@ -53,6 +53,10 @@ import { TagDialog, type TagDialogState } from './tag-dialog'
 import { parseImportFiles, type ImportReport } from '@/utils/importers'
 import { markdownWorkspaceZip, triggerDownload } from '@/utils/exportFormats'
 import type { ImportPreview, ImportProgress, ImportRunResult, ImportSource } from '../ImportExportModal'
+import * as offlineDb from '@/offline/db'
+import { cacheEnabled, syncNow } from '@/offline/syncEngine'
+import { SyncStatusPill } from '@/components/SyncStatusPill'
+import { OfflineEmptyState } from '@/components/OfflineEmptyState'
 
 interface WorkspaceProps {
   email: string
@@ -71,6 +75,32 @@ export function Workspace({ email, onSignOut }: WorkspaceProps) {
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState<string | null>(null)
   const [attachmentCounts, setAttachmentCounts] = useState<Record<string, number>>({})
+  const [syncLabel, setSyncLabel] = useState('All synced')
+  const [isOnline, setIsOnline] = useState(navigator.onLine)
+  const [cachedNoteCount, setCachedNoteCount] = useState(0)
+
+  useEffect(() => {
+    let active = true
+    const refresh = async (event?: Event) => {
+      const online = navigator.onLine
+      setIsOnline(online)
+      const pending = cacheEnabled() ? (await offlineDb.all('outbox')).length : 0
+      const cached = cacheEnabled() ? (await offlineDb.all('notes')).length : 0
+      if (!active) return
+      setCachedNoteCount(cached)
+      const detail = (event as CustomEvent<string> | undefined)?.detail
+      setSyncLabel(detail === 'syncing' ? 'Syncing…' : !online ? `Offline · ${pending} unsynced` : pending ? `${pending} unsynced` : 'All synced')
+    }
+    const onStatus = (event: Event) => { void refresh(event) }
+    const onOnline = () => { void syncNow(); void refresh() }
+    const onOffline = () => { void refresh() }
+    window.addEventListener('inotion:sync-status', onStatus)
+    window.addEventListener('online', onOnline)
+    window.addEventListener('offline', onOffline)
+    void refresh()
+    if (navigator.onLine) void syncNow()
+    return () => { active = false; window.removeEventListener('inotion:sync-status', onStatus); window.removeEventListener('online', onOnline); window.removeEventListener('offline', onOffline) }
+  }, [])
 
   useEffect(() => {
     if (window.location.pathname === '/') navigate({ kind: 'notes' }, { replace: true })
@@ -471,7 +501,10 @@ export function Workspace({ email, onSignOut }: WorkspaceProps) {
 
   return (
     <div className="flex h-dvh overflow-hidden bg-background text-foreground">
-      <button type="button" className="fixed right-3 top-3 z-20 rounded-md border bg-background px-3 py-2 text-xs shadow-sm" onClick={() => setImportExportOpen(true)}>Import / Export</button>
+      <div className="fixed right-3 top-3 z-20 flex items-center gap-2">
+        <SyncStatusPill status={syncLabel === 'Syncing…' ? 'syncing' : !isOnline || syncLabel.includes('unsynced') ? 'offline' : 'synced'} unsyncedCount={Number(syncLabel.match(/\d+/)?.[0] ?? 0)} onRetry={() => void syncNow()} />
+        <button type="button" className="rounded-md border bg-background px-3 py-2 text-xs shadow-sm" onClick={() => setImportExportOpen(true)}>Import / Export</button>
+      </div>
       <ImportExportModal
         open={importExportOpen}
         onClose={() => setImportExportOpen(false)}
@@ -488,6 +521,7 @@ export function Workspace({ email, onSignOut }: WorkspaceProps) {
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">
+        {!isOnline && <div role="status" className="border-b border-border bg-secondary px-4 py-2 text-xs text-muted-foreground">Offline mode: cached notes are available; attachments require an internet connection.</div>}
         {isSearch && (
           <div className={cn(noteId && 'max-md:hidden')}>
             <SearchBar
@@ -530,7 +564,7 @@ export function Workspace({ email, onSignOut }: WorkspaceProps) {
               </div>
             )}
             <div className="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain">
-              <NoteList
+              {!isOnline && list.items.length === 0 && !list.isLoading ? <OfflineEmptyState cachedNoteCount={cachedNoteCount} unsyncedCount={Number(syncLabel.match(/\d+/)?.[0] ?? 0)} onRetry={() => void syncNow()} /> : <NoteList
                 route={route}
                 items={list.items}
                 isIdle={list.isIdle}
@@ -547,7 +581,7 @@ export function Workspace({ email, onSignOut }: WorkspaceProps) {
                 onRetry={list.reload}
                 onLoadMore={list.loadMore}
                 onNewNote={newNote}
-              />
+              />}
             </div>
           </section>
 

@@ -10,6 +10,9 @@ import {
 import { cn } from '@/lib/utils'
 import { SessionsPanel } from './sessions-panel'
 import { TwoFactorPanel } from './two-factor-panel'
+import { useEffect, useState as useReactState } from 'react'
+import { cacheEnabled, setCacheEnabled } from '@/offline/syncEngine'
+import { OfflineCacheToggle } from '../OfflineCacheToggle'
 
 type Tab = 'two-factor' | 'sessions'
 
@@ -26,6 +29,8 @@ interface SecurityModalProps {
 export function SecurityModal({ open, onOpenChange }: SecurityModalProps) {
   const [tab, setTab] = useState<Tab>('two-factor')
   const [recoveryCodes, setRecoveryCodes] = useState<string[] | null>(null)
+  const [offlineCache,setOfflineCache]=useReactState(true)
+  useEffect(()=>setOfflineCache(cacheEnabled()),[open])
 
   // Recovery codes are shown once; closing is blocked until the user confirms.
   const locked = recoveryCodes !== null
@@ -79,6 +84,8 @@ export function SecurityModal({ open, onOpenChange }: SecurityModalProps) {
             )
           })}
         </div>
+
+        <OfflineCacheToggle enabled={offlineCache} onToggle={next=>{setOfflineCache(next);void setCacheEnabled(next)}} />
 
         <div
           role="tabpanel"

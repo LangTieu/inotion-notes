@@ -17,6 +17,8 @@ import {
   type UploadResult,
 } from './types'
 import { compressImage } from '@/utils/importers'
+import * as offlineDb from '@/offline/db'
+import { cacheEnabled, enqueueEntity, enqueueNote, wipeOfflineData } from '@/offline/syncEngine'
 
 export class ApiError extends Error {
   status: number
@@ -99,6 +101,7 @@ async function send(
   }
 
   if (!res.ok) {
+    if (res.status === 401) void offlineDb.clearAllOfflineData()
     if (res.status === 401 && !SILENT_401.includes(path)) {
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new Event(UNAUTHORIZED_EVENT))
@@ -158,8 +161,10 @@ export async function getSession(): Promise<Session | null> {
   }
 }
 
-export const logout = () =>
-  request<{ ok: boolean }>('/api/auth/logout', { method: 'POST' })
+export const logout = async () => {
+  try { return await request<{ ok: boolean }>('/api/auth/logout', { method: 'POST' }) }
+  finally { await wipeOfflineData() }
+}
 
 export const changePassword = (current_password: string, new_password: string) =>
   request<{ ok: boolean }>('/api/auth/change-password', json('POST', { current_password, new_password }))
@@ -205,34 +210,41 @@ export async function listNotes(
   const q = query.q?.trim()
   if (q) params.set('q', q)
   if (cursor > 0) params.set('cursor', String(cursor))
-  const raw = await request<unknown>(`/api/notes?${params.toString()}`)
-  return normalizePage(raw, cursor)
+  try {
+    const raw = await request<unknown>(`/api/notes?${params.toString()}`)
+    const page=normalizePage(raw,cursor);if(cacheEnabled())for(const note of page.notes)await offlineDb.put('notes',note);return page
+  } catch(error) {
+    if(!cacheEnabled()||(navigator.onLine&&(!(error instanceof ApiError)||error.status!==0)))throw error
+    const cached=await offlineDb.all<Note>('notes');const notes=cached.filter(note=>(query.view==='all'||(query.view==='archived'?!!note.archived_at:query.view==='trashed'?!!note.trashed_at:!note.archived_at&&!note.trashed_at))&&(!query.folder||String(note.folder_id)===String(query.folder))&&(!query.tag||(note.tags||[]).some(tag=>String(tag.id)===String(query.tag)))&&(!q||`${note.title} ${note.body_md}`.toLowerCase().includes(q.toLowerCase()))).slice(cursor,cursor+PAGE_SIZE);return {notes,nextCursor:cursor+notes.length<cached.length?cursor+notes.length:null}
+  }
 }
 
-export const createNote = (body: {
+export const createNote = async (body: {
   title: string
   body_md: string
   folder_id?: Id | null
-}) => request<Note>('/api/notes', json('POST', body))
+}) => { try {const note=await request<Note>('/api/notes',json('POST',body));if(cacheEnabled())await offlineDb.put('notes',note);return note} catch(error){if(!cacheEnabled()||(navigator.onLine&&(!(error instanceof ApiError)||error.status!==0)))throw error;const id=`tmp_${crypto.randomUUID()}`,note={...body,id,created_at:new Date().toISOString(),updated_at:new Date().toISOString(),revision:1,is_pinned:false,archived_at:null,trashed_at:null,tags:[]} as Note;await enqueueNote('create',id,body);return note} }
 
-export const getNote = (id: Id) =>
-  request<Note>(`/api/notes/${encodeURIComponent(String(id))}`)
+export const getNote = async (id: Id) => {try{const note=await request<Note>(`/api/notes/${encodeURIComponent(String(id))}`);if(cacheEnabled())await offlineDb.put('notes',note);return note}catch(error){if(!cacheEnabled()||navigator.onLine)throw error;const note=await offlineDb.get<Note>('notes',String(id));if(!note)throw error;return note}}
 
-export const patchNote = (id: Id, revision: number, patch: NotePatch) =>
-  request<Note>(
+export const patchNote = async (id: Id, revision: number, patch: NotePatch) => {
+  try {const note=await request<Note>(
     `/api/notes/${encodeURIComponent(String(id))}`,
     json('PATCH', { revision, ...patch }),
-  )
+  );if(cacheEnabled())await offlineDb.put('notes',note);return note} catch(error){if(!cacheEnabled()||(navigator.onLine&&(!(error instanceof ApiError)||error.status!==0)))throw error;await enqueueNote('patch',String(id),{revision,...patch});return {...(await offlineDb.get<Note>('notes',String(id))),...patch,updated_at:new Date().toISOString()} as Note}
+}
 
-export const deleteNote = (id: Id) =>
-  request<{ ok: boolean }>(`/api/notes/${encodeURIComponent(String(id))}`, {
+export const deleteNote = async (id: Id) => {
+  try { const result = await request<{ok:boolean}>(`/api/notes/${encodeURIComponent(String(id))}`, {
     method: 'DELETE',
-  })
+  }); if(cacheEnabled()) await offlineDb.remove('notes',String(id)); return result } catch(error) { if(!cacheEnabled()||(navigator.onLine&&(!(error instanceof ApiError)||error.status!==0)))throw error;await enqueueNote('delete',String(id));return {ok:true} }
+}
 
-export const restoreNote = (id: Id) =>
-  request<Note>(`/api/notes/${encodeURIComponent(String(id))}/restore`, {
+export const restoreNote = async (id: Id) => {
+  try{const note=await request<Note>(`/api/notes/${encodeURIComponent(String(id))}/restore`, {
     method: 'POST',
-  })
+  }); if(cacheEnabled()) await offlineDb.put('notes',note); return note}catch(error){if(!cacheEnabled()||(navigator.onLine&&(!(error instanceof ApiError)||error.status!==0)))throw error;await enqueueNote('restore',String(id));return (await offlineDb.get<Note>('notes',String(id)))!}
+}
 
 export const listNoteRevisions = (id: Id) => request<NoteRevisionMeta[]>(`/api/notes/${encodeURIComponent(String(id))}/revisions`)
 export const getNoteRevision = (id: Id, revId: string) => request<NoteRevisionDetail>(`/api/notes/${encodeURIComponent(String(id))}/revisions/${encodeURIComponent(revId)}`)
@@ -240,46 +252,46 @@ export const restoreNoteRevision = (id: Id, revId: string, current_revision: num
 
 /* ----------------------------- folders ----------------------------- */
 
-export const listFolders = () => request<Folder[]>('/api/folders')
+export const listFolders = async () => {try{const result=await request<Folder[]>('/api/folders');if(cacheEnabled())for(const value of result)await offlineDb.put('folders',value);return result}catch(error){if(!cacheEnabled()||(navigator.onLine&&(!(error instanceof ApiError)||error.status!==0)))throw error;return offlineDb.all<Folder>('folders')}}
 
 export const createFolder = (name: string, parentId?: Id | null) =>
   request<Folder>(
     '/api/folders',
     json('POST', parentId != null ? { name, parent_id: parentId } : { name }),
-  )
+  ).then(async value=>{if(cacheEnabled())await offlineDb.put('folders',value);return value}).catch(async error=>{if(!cacheEnabled()||(navigator.onLine&&(!(error instanceof ApiError)||error.status!==0)))throw error;const id=`tmp_${crypto.randomUUID()}`,value={id,name,parent_id:parentId||null,position:0,created_at:new Date().toISOString(),updated_at:new Date().toISOString()} as Folder;await enqueueEntity('folder','create',id,{name,parent_id:parentId||null});return value})
 
 export async function updateFolder(id: Id, name: string, parentId: Id | null): Promise<Folder> {
-  await request<unknown>(
+  try { await request<unknown>(
     `/api/folders/${encodeURIComponent(String(id))}`,
     json('PATCH', { name, parent_id: parentId }),
-  )
+  ) } catch(error){if(!cacheEnabled()||(navigator.onLine&&(!(error instanceof ApiError)||error.status!==0)))throw error;await enqueueEntity('folder','patch',String(id),{name,parent_id:parentId});return {...(await offlineDb.get<Folder>('folders',String(id))),name,parent_id:parentId} as Folder}
   return { ...(await listFolders()).find((folder) => String(folder.id) === String(id))!, name, parent_id: parentId }
 }
 
 export const deleteFolder = (id: Id) =>
   request<unknown>(`/api/folders/${encodeURIComponent(String(id))}`, {
     method: 'DELETE',
-  })
+  }).then(async value=>{if(cacheEnabled())await offlineDb.remove('folders',String(id));return value}).catch(async error=>{if(!cacheEnabled()||(navigator.onLine&&(!(error instanceof ApiError)||error.status!==0)))throw error;await enqueueEntity('folder','delete',String(id));return {ok:true}})
 
 /* ------------------------------- tags ------------------------------- */
 
-export const listTags = () => request<Tag[]>('/api/tags')
+export const listTags = async () => {try{const result=await request<Tag[]>('/api/tags');if(cacheEnabled())for(const value of result)await offlineDb.put('tags',value);return result}catch(error){if(!cacheEnabled()||(navigator.onLine&&(!(error instanceof ApiError)||error.status!==0)))throw error;return offlineDb.all<Tag>('tags')}}
 
 export const createTag = (name: string) =>
-  request<Tag>('/api/tags', json('POST', { name }))
+  request<Tag>('/api/tags', json('POST', { name })).then(async value=>{if(cacheEnabled())await offlineDb.put('tags',value);return value}).catch(async error=>{if(!cacheEnabled()||(navigator.onLine&&(!(error instanceof ApiError)||error.status!==0)))throw error;const id=`tmp_${crypto.randomUUID()}`,value={id,name,created_at:new Date().toISOString(),note_count:0} as Tag;await enqueueEntity('tag','create',id,{name});return value})
 
 export async function updateTag(id: Id, name: string): Promise<Tag> {
-  await request<unknown>(
+  try { await request<unknown>(
     `/api/tags/${encodeURIComponent(String(id))}`,
     json('PATCH', { name }),
-  )
+  ) } catch(error){if(!cacheEnabled()||(navigator.onLine&&(!(error instanceof ApiError)||error.status!==0)))throw error;await enqueueEntity('tag','patch',String(id),{name});return {...(await offlineDb.get<Tag>('tags',String(id))),name} as Tag}
   return { ...(await listTags()).find((tag) => String(tag.id) === String(id))!, name }
 }
 
 export const deleteTag = (id: Id) =>
   request<{ ok: boolean }>(`/api/tags/${encodeURIComponent(String(id))}`, {
     method: 'DELETE',
-  })
+  }).then(async value=>{if(cacheEnabled())await offlineDb.remove('tags',String(id));return value}).catch(async error=>{if(!cacheEnabled()||(navigator.onLine&&(!(error instanceof ApiError)||error.status!==0)))throw error;await enqueueEntity('tag','delete',String(id));return {ok:true}})
 
 /* --------------------------- attachments --------------------------- */
 

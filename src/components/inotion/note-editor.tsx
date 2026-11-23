@@ -43,7 +43,8 @@ import {
 import { cn } from '@/lib/utils'
 import { AttachmentsPanel } from './attachments-panel'
 import { ConfirmDialog } from './confirm-dialog'
-import { ConflictDialog } from './conflict-dialog'
+import { ConflictResolutionDialog } from '../ConflictResolutionDialog'
+import { resolveConflict } from '@/offline/syncEngine'
 import { ErrorBox } from './state-views'
 import { TagPicker } from './tag-picker'
 import { MarkdownPreview } from './markdown-preview'
@@ -133,16 +134,21 @@ export function NoteEditor({
   const [actionError, setActionError] = useState<string | null>(null)
   const [busyAction, setBusyAction] = useState<string | null>(null)
   const [conflict, setConflict] = useState(false)
+  const [conflictResolving, setConflictResolving] = useState(false)
+  const [conflictError, setConflictError] = useState<string | null>(null)
   const [confirmDelete, setConfirmDelete] = useState(false)
 
   const draftRef = useRef({ title: note.title, body: note.body_md })
   const savedRef = useRef({ title: note.title, body: note.body_md })
   const revisionRef = useRef(note.revision)
   const conflictRef = useRef(false)
+  const offlineConflictId = useRef<string | null>(null)
   const queueRef = useRef<Promise<unknown>>(Promise.resolve())
   const flushRef = useRef<() => Promise<void>>(async () => {})
   const onUpdatedRef = useRef(onUpdated)
   onUpdatedRef.current = onUpdated
+
+  useEffect(()=>{const receive=(event:Event)=>{const detail=(event as CustomEvent<{noteId:string;outboxId:string}>).detail;if(String(detail.noteId)===String(note.id)){offlineConflictId.current=detail.outboxId;markConflict()}};window.addEventListener('inotion:offline-conflict',receive);return()=>window.removeEventListener('inotion:offline-conflict',receive)},[note.id])
 
   const readOnly = !!note.trashed_at
   const isArchived = !!note.archived_at && !note.trashed_at
@@ -285,6 +291,7 @@ export function NoteEditor({
     setStatus('saved')
     setSaveError(null)
     onUpdatedRef.current(latest)
+    if(offlineConflictId.current){await resolveConflict(offlineConflictId.current,'reload',latest);offlineConflictId.current=null}
   }
 
   const overwrite = async () => {
@@ -301,6 +308,7 @@ export function NoteEditor({
     setConflict(false)
     setStatus('saved')
     onUpdatedRef.current(updated)
+    if(offlineConflictId.current){await resolveConflict(offlineConflictId.current,'overwrite',updated);offlineConflictId.current=null}
   }
 
   const exportThisNote = () => {
@@ -551,7 +559,7 @@ export function NoteEditor({
 
       <RevisionHistoryDrawer open={historyOpen} onClose={()=>setHistoryOpen(false)} noteId={String(note.id)} currentTitle={title} currentBodyMd={body} currentRevision={revisionRef.current} onLoadRevisions={id=>listNoteRevisions(id)} onLoadRevisionDetail={(id,revId)=>getNoteRevision(id,revId)} onRestore={async(id,revId,currentRevision)=>{await flushContent();const updated=await restoreNoteRevision(id,revId,currentRevision);revisionRef.current=updated.revision;savedRef.current={title:updated.title,body:updated.body_md};draftRef.current={title:updated.title,body:updated.body_md};setTitle(updated.title);setBody(updated.body_md);onUpdatedRef.current(updated)}} onSaveSnapshot={async()=>{await flushContent();const latest=await getNote(note.id);const snap=await patchNote(note.id,latest.revision,{force_snapshot:true});revisionRef.current=snap.revision;onUpdatedRef.current(snap)}} />
 
-      <ConflictDialog open={conflict} onReload={reloadLatest} onOverwrite={overwrite} />
+      <ConflictResolutionDialog open={conflict} noteTitle={title} localUpdatedAt={Date.parse(note.updated_at)} serverUpdatedAt={Date.parse(note.updated_at)} localPreview={body} resolving={conflictResolving} error={conflictError} onReloadLatest={() => { setConflictResolving(true); setConflictError(null); void reloadLatest().catch(e => setConflictError(e instanceof Error ? e.message : 'Could not reload the latest version.')).finally(() => setConflictResolving(false)) }} onOverwrite={() => { setConflictResolving(true); setConflictError(null); void overwrite().catch(e => setConflictError(e instanceof Error ? e.message : 'Could not overwrite the server version.')).finally(() => setConflictResolving(false)) }} />
 
       <ConfirmDialog
         open={confirmDelete}

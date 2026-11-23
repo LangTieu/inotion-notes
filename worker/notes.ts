@@ -111,6 +111,7 @@ export async function handleNotes(request:Request,env:NotesEnv,user:SessionUser,
     const noteId=url.pathname.split('/').pop()!;
     await db.prepare('DELETE FROM note_revisions WHERE note_id=? AND user_id=?').bind(noteId,user.id).run();
     const result=await db.prepare('DELETE FROM notes WHERE id=? AND user_id=?').bind(noteId,user.id).run();
+    if(result.meta.changes) try { await db.prepare("INSERT INTO sync_tombstones(id,user_id,entity_type,entity_id,deleted_at) VALUES(?,?,'note',?,?)").bind(newId(),user.id,noteId,Date.now()).run(); } catch { /* Older local databases may not have applied migration 0008 yet. */ }
     return result.meta.changes?json({ok:true}):error('Note not found',404);
   }
   if(path==='/api/notes/:id/restore'&&request.method==='POST') {

@@ -4,6 +4,7 @@ import { decryptText, encryptText, getEncryptionKey } from './crypto';
 import { generateTotpSecret, hashRecoveryCode, recoveryCodes, verifyTotp } from './totp';
 import { deleteNoteAttachments, handleAttachments, type AttachmentEnv } from './attachments';
 import { handleRevisions } from './revisions';
+import { handleSync } from './sync';
 
 interface Env extends AuthEnv, AttachmentEnv { ASSETS: Fetcher; }
 const json = (body: unknown, status = 200, headers: HeadersInit = {}) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', ...headers } });
@@ -93,6 +94,7 @@ async function route(request: Request, env: Env): Promise<Response> {
   if (path === '/api/auth/2fa/verify' && request.method === 'POST') { if(!validMutationOrigin(request)) return error('Invalid request origin',403); return twoFactorVerify(request,env); }
   if (path.startsWith('/api/auth/2fa/') || path.startsWith('/api/auth/sessions')) { if(['POST','DELETE'].includes(request.method)&&!validMutationOrigin(request)) return error('Invalid request origin',403); return await securityRoutes(request,env,path) || error('Not found',404); }
   if (path === '/api/auth/change-password' && request.method === 'POST') return changePassword(request, env);
+  if (path === '/api/sync') { const user = await currentSession(request, env); if (!user) return error('Not authenticated', 401); return await handleSync(request, env, user) || error('Not found',404); }
   if (path === '/api/auth/me' && request.method === 'GET') {
     const user = await currentSession(request, env);
     return user ? json({ email: user.email }) : error('Not authenticated', 401);

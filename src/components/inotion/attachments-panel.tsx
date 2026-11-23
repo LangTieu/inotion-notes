@@ -138,6 +138,7 @@ export function AttachmentsPanel({ noteId, readOnly = false, onCountChange }: At
 
       {open && (
         <div className="max-h-72 space-y-3 overflow-y-auto px-4 pt-1 pb-4">
+          {!navigator.onLine && <p className="text-xs text-muted-foreground">Attachments need an internet connection and are not stored for offline use.</p>}
           {a.warning && (
             <div
               role="status"

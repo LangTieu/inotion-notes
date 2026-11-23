@@ -1,6 +1,7 @@
 'use client'
 
 import type { ReactNode } from 'react'
+import { useEffect, useState } from 'react'
 import {
   Archive,
   FileText,
@@ -19,6 +20,9 @@ import type { Route } from '@/lib/inotion/route'
 import type { Note } from '@/lib/inotion/types'
 import { cn } from '@/lib/utils'
 import { BlockError, EmptyState, ListSkeleton } from './state-views'
+import { syncNow } from '@/offline/syncEngine'
+import { all as getOfflineRows } from '@/offline/db'
+import { SyncStatusPill } from '../SyncStatusPill'
 
 interface ToolbarProps {
   title: string
@@ -43,6 +47,8 @@ export function NoteListToolbar({
   onRefresh,
   onNewNote,
 }: ToolbarProps) {
+  const [syncLabel,setSyncLabel]=useState('All synced')
+  useEffect(()=>{const refresh=async(event?:Event)=>{const count=(await getOfflineRows('outbox')).length,detail=(event as CustomEvent<string>|undefined)?.detail;setSyncLabel(detail==='syncing'?'Syncing…':!navigator.onLine?`Offline · ${count} unsynced`:count?`Offline · ${count} unsynced`:'All synced')};const online=()=>{void syncNow();void refresh()};const update=(event:Event)=>void refresh(event);void refresh();window.addEventListener('online',online);window.addEventListener('offline',online);window.addEventListener('inotion:sync-status',update);return()=>{window.removeEventListener('online',online);window.removeEventListener('offline',online);window.removeEventListener('inotion:sync-status',update)}},[])
   const iconBtn =
     'flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-secondary hover:text-foreground focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:outline-none pointer-coarse:size-11'
   return (
@@ -63,6 +69,7 @@ export function NoteListToolbar({
           <p className="truncate text-xs text-muted-foreground">{subtitle}</p>
         )}
       </div>
+      <SyncStatusPill status={syncLabel === 'Syncing…' ? 'syncing' : syncLabel.startsWith('Offline') ? 'offline' : 'synced'} unsyncedCount={Number(syncLabel.match(/\d+/)?.[0] ?? 0)} onRetry={() => void syncNow()} />
       <button type="button" onClick={onSearch} aria-label="Search notes" className={iconBtn}>
         <Search className="size-4" aria-hidden="true" />
       </button>
