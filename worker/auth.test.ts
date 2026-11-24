@@ -124,21 +124,24 @@ describe('Phase 1 authentication', () => {
 });
 
 describe('password hashing strength', () => {
-  it('hashes new passwords at the OWASP-recommended iteration count', async () => {
-    expect(PBKDF2_ITERATIONS).toBeGreaterThanOrEqual(600_000);
+  it('hashes new passwords at the Worker-feasible iteration count (100k)', async () => {
+    // Workers' crypto.subtle.deriveBits throws above ~100k iterations in this
+    // Worker (CPU limit), so 600k broke login/change-password/register (500).
+    expect(PBKDF2_ITERATIONS).toBe(100_000);
     const hash = db.users[0].password_hash;
     expect(Number(hash.split('$')[1])).toBe(100_000); // legacy fixture
-    expect(passwordNeedsRehash(hash)).toBe(true);
+    expect(passwordNeedsRehash(hash)).toBe(false);
+    expect(passwordNeedsRehash('pbkdf2-sha256$50000$c2VlZC1vbmx5LXNhbHQh$yoTKBqS5XcXPivLDMPTpcqANoXuIz6PBA52AELdVxPc')).toBe(true);
   });
-  it('still verifies legacy 100k hashes and rehashes transparently on login', async () => {
+  it('still verifies legacy 100k hashes and logs in without rehash', async () => {
     const legacy = await legacyHash('some-legacy-password');
     expect(await verifyPassword(legacy, 'some-legacy-password')).toBe(true);
-    expect(passwordNeedsRehash(legacy)).toBe(true);
+    expect(passwordNeedsRehash(legacy)).toBe(false);
     const user = { id: 'user-legacy', email: 'tranbinhanbr01@gmail.com', password_hash: legacy, disabled_at: null };
     db.users = [user];
     const login = await worker.fetch(post('/api/auth/login', { email: user.email, password: 'some-legacy-password' }), env());
     expect(login.status).toBe(200);
-    expect(user.password_hash.startsWith(`pbkdf2-sha256$${PBKDF2_ITERATIONS}$`)).toBe(true);
+    expect(user.password_hash).toBe(legacy);
     expect(passwordNeedsRehash(user.password_hash)).toBe(false);
   });
 });

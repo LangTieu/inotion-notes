@@ -18,7 +18,7 @@ export async function sha256Hex(value: string): Promise<string> {
   const hash = new Uint8Array(await crypto.subtle.digest('SHA-256', encoder.encode(value)));
   return [...hash].map(x => x.toString(16).padStart(2, '0')).join('');
 }
-export const PBKDF2_ITERATIONS = 600_000;
+export const PBKDF2_ITERATIONS = 100_000; // Workers crypto.subtle.deriveBits throws above ~100k iterations in this Worker (CPU limit); 600k broke login/change-password/register with 500.
 export const PBKDF2_MIN_ITERATIONS = 100_000;
 
 export async function hashPassword(password: string, salt = crypto.getRandomValues(new Uint8Array(16))): Promise<string> {
