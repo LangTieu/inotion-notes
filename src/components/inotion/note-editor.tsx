@@ -7,10 +7,12 @@ import {
   ArrowLeft,
   Check,
   Download,
+  History,
   MoreHorizontal,
   Pin,
   RotateCcw,
   Share2,
+  Sparkles,
   Trash2,
   TriangleAlert,
 } from 'lucide-react'
@@ -91,21 +93,35 @@ function SaveIndicator({
     >
       {status === 'saving' && (
         <>
-          <Spinner className="size-3" /> Saving…
+          <Spinner className="size-3 shrink-0" />
+          <span className="sr-only sm:not-sr-only">Saving…</span>
         </>
       )}
       {status === 'saved' && (
         <span className="flex items-center gap-1 text-success">
-          <Check className="size-3.5" aria-hidden="true" /> Saved
+          <Check className="size-3.5 shrink-0" aria-hidden="true" />
+          <span className="sr-only sm:not-sr-only">Saved</span>
         </span>
       )}
-      {status === 'dirty' && <span>Unsaved changes</span>}
+      {status === 'dirty' && (
+        <>
+          <span
+            className="size-2 shrink-0 rounded-full bg-amber-500 sm:hidden"
+            aria-hidden="true"
+          />
+          <span className="sr-only sm:not-sr-only">Unsaved changes</span>
+        </>
+      )}
       {status === 'conflict' && (
-        <span className="text-red-700">Not saved: edit conflict</span>
+        <>
+          <TriangleAlert className="size-3.5 shrink-0 text-red-700 sm:hidden" aria-hidden="true" />
+          <span className="sr-only text-red-700 sm:not-sr-only">Not saved: edit conflict</span>
+        </>
       )}
       {status === 'error' && (
         <span className="flex min-w-0 items-center gap-1.5 text-red-700">
-          <span className="truncate">{message ?? 'Save failed'}</span>
+          <TriangleAlert className="size-3.5 shrink-0 sm:hidden" aria-hidden="true" />
+          <span className="min-w-0 truncate sr-only sm:not-sr-only">{message ?? 'Save failed'}</span>
           <button
             type="button"
             onClick={onRetry}
@@ -402,8 +418,8 @@ export function NoteEditor({
           <>
             <ShareButton noteTitle={title} links={shareRecords} isLoading={shareLoading} onOpen={() => { void loadShares() }} onCreate={createShareFromModal} onRevoke={async id => { await revokeNoteShare(id);setShareRecords(current=>current.filter(link=>link.id!==id)) }} />
             <ReminderPopover variant="toolbar" reminderAt={note.reminder_at} onChange={value => { void (async () => { try { const updated = await patchNote(note.id, revisionRef.current, { reminder_at: value }); revisionRef.current = updated.revision; onUpdatedRef.current(updated) } catch (error) { setSaveError(error instanceof Error ? error.message : 'Could not update reminder.') } })() }} />
-            <button type="button" onClick={()=>setHistoryOpen(true)} className="rounded border px-2 py-1 text-xs">History</button>
-            <button type="button" onClick={() => setAiOpen((open) => !open)} aria-expanded={aiOpen} className="rounded border px-2 py-1 text-xs">AI assistant</button>
+            <button type="button" onClick={()=>setHistoryOpen(true)} className="hidden rounded border px-2 py-1 text-xs sm:inline-block">History</button>
+            <button type="button" onClick={() => setAiOpen((open) => !open)} aria-expanded={aiOpen} className="hidden rounded border px-2 py-1 text-xs sm:inline-block">AI assistant</button>
             <button
               type="button"
               onClick={() => applyMeta('pin', { is_pinned: !note.is_pinned })}
@@ -451,6 +467,12 @@ export function NoteEditor({
             </button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-56">
+            <DropdownMenuItem className="sm:hidden" onSelect={() => setHistoryOpen(true)}>
+              <History aria-hidden="true" /> History
+            </DropdownMenuItem>
+            <DropdownMenuItem className="sm:hidden" onSelect={() => setAiOpen((open) => !open)}>
+              <Sparkles aria-hidden="true" /> AI assistant
+            </DropdownMenuItem>
             {!note.trashed_at && <DropdownMenuItem onSelect={() => void createShareLink()}><Share2 aria-hidden="true" /> Create encrypted share link</DropdownMenuItem>}
             <DropdownMenuItem onSelect={exportThisNote}>
               <Download aria-hidden="true" /> Export note as JSON
