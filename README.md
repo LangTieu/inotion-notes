@@ -1,6 +1,5 @@
 # inotion — personal notes web app
 
-Live: https://inotion.eu.cc
 
 Markdown notes with folders, tags, search, and file attachments, running
 entirely on Cloudflare's free tier: Workers + D1 + B2 (S3-compatible) storage.

@@ -49,10 +49,12 @@ class FakeDB {
   }
 }
 let db: FakeDB;
-const env = () => ({ DB: db as never, ASSETS: { fetch: async () => new Response('asset') } as never, ALLOWED_EMAILS: 'tranbinhanbr01@gmail.com' });
+const GATE = 'c'.repeat(32) + 'd'.repeat(32);
+const env = () => ({ DB: db as never, ASSETS: { fetch: async () => new Response('asset') } as never, ALLOWED_EMAILS: 'tranbinhanbr01@gmail.com', GATE_TOKEN: GATE });
 function post(path: string, body: unknown, cookie?: string) {
   const headers = new Headers({ Origin: 'https://inotion.eu.cc', 'Content-Type': 'application/json', 'CF-Connecting-IP': '192.0.2.14' });
-  if (cookie) headers.set('Cookie', cookie);
+  const merged = [cookie, `inotion_gate=${GATE}`].filter(Boolean).join('; ');
+  headers.set('Cookie', merged);
   return new Request(`https://inotion.eu.cc${path}`, { method: 'POST', headers, body: JSON.stringify(body) });
 }
 beforeEach(() => { db = new FakeDB(); });
@@ -75,7 +77,7 @@ describe('Phase 1 authentication', () => {
     expect(response.status).toBe(403);
   });
   it('returns 401 from /api/auth/me without a cookie', async () => {
-    const response = await worker.fetch(new Request('https://inotion.eu.cc/api/auth/me'), env());
+    const response = await worker.fetch(new Request('https://inotion.eu.cc/api/auth/me', { headers: { Cookie: `inotion_gate=${GATE}` } }), env());
     expect(response.status).toBe(401);
   });
   it('revokes the session on logout and rejects its old cookie', async () => {
@@ -84,7 +86,7 @@ describe('Phase 1 authentication', () => {
     const logout = await worker.fetch(post('/api/auth/logout', {}, `notes_session=${token}`), env());
     expect(logout.headers.get('Set-Cookie')).toContain('Max-Age=0');
     expect(db.sessions[0].revoked_at).toBeTruthy();
-    const me = await worker.fetch(new Request('https://inotion.eu.cc/api/auth/me', { headers: { Cookie: `notes_session=${token}` } }), env());
+    const me = await worker.fetch(new Request('https://inotion.eu.cc/api/auth/me', { headers: { Cookie: `notes_session=${token}; inotion_gate=${GATE}` } }), env());
     expect(me.status).toBe(401);
   });
   it('changes password and revokes other sessions while keeping the current session', async () => {

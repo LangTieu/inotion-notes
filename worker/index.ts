@@ -8,10 +8,10 @@ import { handleSync } from './sync';
 import { handlePublic, handleShareApi, publicTrafficLimited } from './share';
 import { handleReminders } from './reminders';
 import { handleClip } from './clips';
-import { handleTokens } from './tokens';
+import { handleTokens, verifyApiToken } from './tokens';
 import { handleMcp } from './mcp';
 
-interface Env extends AuthEnv, AttachmentEnv { ASSETS: Fetcher; }
+interface Env extends AuthEnv, AttachmentEnv { ASSETS: Fetcher; GATE_TOKEN?: string; }
 const json = (body: unknown, status = 200, headers: HeadersInit = {}) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', ...headers } });
 const error = (message: string, status: number, headers: HeadersInit = {}) => json({ error: message }, status, headers);
 const deniedCookie = 'notes_session=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0';
@@ -159,14 +159,63 @@ async function route(request: Request, env: Env): Promise<Response> {
   return assetResponse;
 }
 
+const GATE_COOKIE = 'inotion_gate';
+const gateDenied = (): Response => new Response(null, { status: 404, headers: { 'Cache-Control': 'no-store', 'X-Robots-Tag': 'noindex, nofollow' } });
+
+function readGateCookie(request: Request): string | null {
+  const header = request.headers.get('Cookie');
+  if (!header) return null;
+  for (const part of header.split(';')) {
+    const eq = part.indexOf('=');
+    if (eq === -1) continue;
+    if (part.slice(0, eq).trim() === GATE_COOKIE) return part.slice(eq + 1).trim();
+  }
+  return null;
+}
+
+function gateExemptPath(path: string): boolean {
+  return path === '/robots.txt' || path === '/vao' || path === '/api/config' ||
+    /^\/api\/public\//.test(path) || /^\/(s|p)\//.test(path);
+}
+
+async function gatePassed(request: Request, env: Env, path: string): Promise<boolean> {
+  if (gateExemptPath(path)) return true;
+  const gate = env.GATE_TOKEN;
+  if (!gate) return false;
+  if (readGateCookie(request) === gate) return true;
+  return (await currentSession(request, env)) != null;
+}
+
+async function handleGateRecovery(request: Request, env: Env, path: string): Promise<Response | null> {
+  if (path !== '/vao') return null;
+  const gate = env.GATE_TOKEN;
+  const token = gate ? new URL(request.url).searchParams.get('t') : null;
+  if (!gate || !token || token !== gate) return gateDenied();
+  return new Response(null, {
+    status: 302,
+    headers: {
+      Location: '/notes',
+      'Set-Cookie': `${GATE_COOKIE}=${token}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=31536000`,
+      'Cache-Control': 'no-store',
+    },
+  });
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     try {
+      const path = new URL(request.url).pathname.replace(/\/+$/, '') || '/';
+      const mcpToken = path === '/api/mcp' ? await verifyApiToken(request, env) : null;
+      if (!mcpToken && !(await gatePassed(request, env, path))) return gateDenied();
+      const recovery = await handleGateRecovery(request, env, path);
+      if (recovery) return recovery;
+      if (path === '/robots.txt') return new Response('User-agent: *\nDisallow: /\n', { headers: { 'Content-Type': 'text/plain; charset=utf-8', 'X-Robots-Tag': 'noindex, nofollow' } });
       const response = await route(request, env);
       const headers = new Headers(response.headers);
       headers.set('X-Content-Type-Options', 'nosniff');
       headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
       headers.set('X-Frame-Options', 'DENY');
+      headers.set('X-Robots-Tag', 'noindex, nofollow');
       return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
     } catch { return error('Internal server error', 500); }
   }

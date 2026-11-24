@@ -6,10 +6,12 @@ import { totpAt } from './totp';
 
 let sqlite:DatabaseSync, db:D1Database, originalFetch:typeof fetch;
 const password='e2e-only-password-not-a-secret';
-const env=()=>({DB:db,ASSETS:{fetch:async()=>new Response('asset')},ALLOWED_EMAILS:'owner@example.test',ENCRYPTION_KEY:btoa('01234567890123456789012345678901'),B2_KEY_ID:'test-id',B2_APPLICATION_KEY:'test-key',B2_BUCKET_NAME:'notes',B2_S3_ENDPOINT:'https://s3.us-east-005.backblazeb2.com'} as never);
+const GATE='e'.repeat(32)+'f'.repeat(32);
+const env=()=>({DB:db,ASSETS:{fetch:async()=>new Response('asset')},ALLOWED_EMAILS:'owner@example.test',GATE_TOKEN:GATE,ENCRYPTION_KEY:btoa('01234567890123456789012345678901'),B2_KEY_ID:'test-id',B2_APPLICATION_KEY:'test-key',B2_BUCKET_NAME:'notes',B2_S3_ENDPOINT:'https://s3.us-east-005.backblazeb2.com'} as never);
 async function request(path:string,method='GET',body?:BodyInit, cookie?:string, multipart=false) {
   const headers=new Headers(); if(['POST','PATCH','DELETE'].includes(method))headers.set('Origin','https://inotion.eu.cc');
-  if(cookie)headers.set('Cookie',cookie); if(body&&!multipart)headers.set('Content-Type','application/json');
+  const merged=[cookie,`inotion_gate=${GATE}`].filter(Boolean).join('; ');
+  if(merged)headers.set('Cookie',merged); if(body&&!multipart)headers.set('Content-Type','application/json');
   return worker.fetch(new Request(`https://inotion.eu.cc${path}`,{method,headers,...(body===undefined?{}:{body})}),env());
 }
 async function json(response:Response){return response.json() as Promise<any>;}
