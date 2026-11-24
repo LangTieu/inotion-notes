@@ -197,6 +197,7 @@ async function handleGateRecovery(request: Request, env: Env, path: string): Pro
       Location: '/notes',
       'Set-Cookie': `${GATE_COOKIE}=${token}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=31536000`,
       'Cache-Control': 'no-store',
+      'X-Robots-Tag': 'noindex, nofollow',
     },
   });
 }
