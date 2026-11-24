@@ -35,7 +35,7 @@ beforeEach(async()=>{
     CREATE TRIGGER notes_fts_insert AFTER INSERT ON notes BEGIN INSERT INTO notes_fts(rowid,title) VALUES(new.rowid,new.title); END;
     CREATE TRIGGER notes_fts_update AFTER UPDATE OF title ON notes BEGIN INSERT INTO notes_fts(notes_fts,rowid,title) VALUES('delete',old.rowid,old.title);INSERT INTO notes_fts(rowid,title) VALUES(new.rowid,new.title);END;
     CREATE TRIGGER notes_fts_delete AFTER DELETE ON notes BEGIN INSERT INTO notes_fts(notes_fts,rowid,title) VALUES('delete',old.rowid,old.title);END;
-    CREATE TABLE tags(id TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id),name TEXT NOT NULL,created_at INTEGER NOT NULL,UNIQUE(user_id,name));
+    CREATE TABLE tags(id TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id),name TEXT NOT NULL,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL DEFAULT 0,UNIQUE(user_id,name));
     CREATE TABLE note_tags(note_id TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,tag_id TEXT NOT NULL REFERENCES tags(id) ON DELETE CASCADE,PRIMARY KEY(note_id,tag_id));
     CREATE TABLE attachments(id TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id),note_id TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,object_key TEXT NOT NULL UNIQUE,filename TEXT NOT NULL,content_type TEXT NOT NULL,byte_size INTEGER NOT NULL,created_at INTEGER NOT NULL,b2_account TEXT NOT NULL DEFAULT 'tk1');`);
   sqlite.exec(`ALTER TABLE users ADD COLUMN totp_secret_enc TEXT NULL;

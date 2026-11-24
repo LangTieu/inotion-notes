@@ -161,19 +161,23 @@ export async function handleNotes(request:Request,env:NotesEnv,user:SessionUser,
     const folderId=url.pathname.split('/').pop()!,exists=await ownedFolder(db,folderId,user.id);if(!exists)return error('Folder not found',404);
     await db.prepare('UPDATE notes SET folder_id=NULL,updated_at=?,revision=revision+1 WHERE folder_id=? AND user_id=?').bind(Date.now(),folderId,user.id).run();
     await db.prepare('UPDATE folders SET parent_id=NULL,updated_at=? WHERE parent_id=? AND user_id=?').bind(Date.now(),folderId,user.id).run();
-    await db.prepare('DELETE FROM folders WHERE id=? AND user_id=?').bind(folderId,user.id).run();return json({ok:true});
+    await db.prepare('DELETE FROM folders WHERE id=? AND user_id=?').bind(folderId,user.id).run();
+    await db.prepare('INSERT INTO sync_tombstones(id,user_id,entity_type,entity_id,deleted_at) VALUES(?,?,?,?,?)').bind(newId(),user.id,'folder',folderId,Date.now()).run();
+    return json({ok:true});
   }
   if(path==='/api/tags'&&request.method==='GET')return json((await db.prepare('SELECT t.id,t.name,t.created_at,COUNT(nt.note_id) AS note_count FROM tags t LEFT JOIN note_tags nt ON nt.tag_id=t.id WHERE t.user_id=? GROUP BY t.id ORDER BY t.name').bind(user.id).all()).results||[]);
   if(path==='/api/tags'&&request.method==='POST') {
     const input=await parseBody(request),name=cleanName(input?.name);if(!input||!name)return error('Name required');const tagId=newId(),now=Date.now();
-    await db.prepare('INSERT INTO tags(id,user_id,name,created_at) VALUES(?,?,?,?)').bind(tagId,user.id,name,now).run();return json({id:tagId,name,created_at:now,note_count:0},201);
+    await db.prepare('INSERT INTO tags(id,user_id,name,created_at,updated_at) VALUES(?,?,?,?,?)').bind(tagId,user.id,name,now,now).run();return json({id:tagId,name,created_at:now,note_count:0},201);
   }
   if(path.startsWith('/api/tags/')&&request.method==='PATCH') {
     const tagId=url.pathname.split('/').pop()!,input=await parseBody(request),name=cleanName(input?.name);if(!input||!name)return error('Name required');
-    const result=await db.prepare('UPDATE tags SET name=? WHERE id=? AND user_id=?').bind(name,tagId,user.id).run();return result.meta.changes?json({ok:true}):error('Tag not found',404);
+    const result=await db.prepare('UPDATE tags SET name=?,updated_at=? WHERE id=? AND user_id=?').bind(name,Date.now(),tagId,user.id).run();return result.meta.changes?json({ok:true}):error('Tag not found',404);
   }
   if(path.startsWith('/api/tags/')&&request.method==='DELETE') {
-    const result=await db.prepare('DELETE FROM tags WHERE id=? AND user_id=?').bind(url.pathname.split('/').pop(),user.id).run();return result.meta.changes?json({ok:true}):error('Tag not found',404);
+    const tagId=url.pathname.split('/').pop()!,result=await db.prepare('DELETE FROM tags WHERE id=? AND user_id=?').bind(tagId,user.id).run();
+    if(result.meta.changes)await db.prepare('INSERT INTO sync_tombstones(id,user_id,entity_type,entity_id,deleted_at) VALUES(?,?,?,?,?)').bind(newId(),user.id,'tag',tagId,Date.now()).run();
+    return result.meta.changes?json({ok:true}):error('Tag not found',404);
   }
   return null;
 }

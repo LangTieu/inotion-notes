@@ -15,13 +15,15 @@ export async function handleSync(request: Request, env: SyncEnv, user: SessionUs
   const candidates = await env.DB.prepare(`SELECT kind,id,changed_at FROM (
     SELECT 'note' kind,id,updated_at changed_at FROM notes WHERE user_id=? AND updated_at>?
     UNION ALL SELECT 'folder',id,updated_at FROM folders WHERE user_id=? AND updated_at>?
-    UNION ALL SELECT 'tag',id,created_at FROM tags WHERE user_id=? AND created_at>?
-    UNION ALL SELECT 'deleted',entity_id,deleted_at FROM sync_tombstones WHERE user_id=? AND entity_type='note' AND deleted_at>?
+    UNION ALL SELECT 'tag',id,updated_at FROM tags WHERE user_id=? AND updated_at>?
+    UNION ALL SELECT 'deleted_'||entity_type,entity_id,deleted_at FROM sync_tombstones WHERE user_id=? AND deleted_at>?
   ) ORDER BY changed_at,id LIMIT 201 OFFSET ?`).bind(user.id,since,user.id,since,user.id,since,user.id,since,offset).all<{kind:string;id:string;changed_at:number}>();
   const rows = candidates.results || [], has_more = rows.length > 200, page = rows.slice(0,200);
-  const key = await getEncryptionKey(env.ENCRYPTION_KEY), notes: unknown[] = [], folders: unknown[] = [], tags: unknown[] = [], deleted_note_ids: string[] = [];
+  const key = await getEncryptionKey(env.ENCRYPTION_KEY), notes: unknown[] = [], folders: unknown[] = [], tags: unknown[] = [], deleted_note_ids: string[] = [], deleted_folder_ids: string[] = [], deleted_tag_ids: string[] = [];
   for (const row of page) {
-    if (row.kind === 'deleted') { deleted_note_ids.push(row.id); continue; }
+    if (row.kind === 'deleted_note') { deleted_note_ids.push(row.id); continue; }
+    if (row.kind === 'deleted_folder') { deleted_folder_ids.push(row.id); continue; }
+    if (row.kind === 'deleted_tag') { deleted_tag_ids.push(row.id); continue; }
     if (row.kind === 'note') {
       const note = await env.DB.prepare('SELECT * FROM notes WHERE id=? AND user_id=?').bind(row.id,user.id).first<any>();
       if (note) {
@@ -32,8 +34,8 @@ export async function handleSync(request: Request, env: SyncEnv, user: SessionUs
     } else if (row.kind === 'folder') {
       const item = await env.DB.prepare('SELECT id,name,parent_id,position,created_at,updated_at FROM folders WHERE id=? AND user_id=?').bind(row.id,user.id).first(); if(item) folders.push(item);
     } else {
-      const item = await env.DB.prepare('SELECT id,name,created_at FROM tags WHERE id=? AND user_id=?').bind(row.id,user.id).first(); if(item) tags.push(item);
+      const item = await env.DB.prepare('SELECT id,name,created_at,updated_at FROM tags WHERE id=? AND user_id=?').bind(row.id,user.id).first(); if(item) tags.push(item);
     }
   }
-  return json({ server_time: Date.now(), notes, folders, tags, deleted_note_ids, has_more });
+  return json({ server_time: Date.now(), notes, folders, tags, deleted_note_ids, deleted_folder_ids, deleted_tag_ids, has_more });
 }

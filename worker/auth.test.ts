@@ -1,6 +1,14 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import worker from './index';
-import { sha256Hex } from './auth';
+import { PBKDF2_ITERATIONS, passwordNeedsRehash, sha256Hex, verifyPassword } from './auth';
+
+async function legacyHash(password: string): Promise<string> {
+  const salt = new Uint8Array(16).fill(7);
+  const material = await crypto.subtle.importKey('raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveBits']);
+  const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', salt, iterations: 100_000, hash: 'SHA-256' }, material, 256);
+  const b64 = (d: Uint8Array) => btoa(String.fromCharCode(...d)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  return `pbkdf2-sha256$100000$${b64(salt)}$${b64(new Uint8Array(bits))}`;
+}
 
 type AnyRow = Record<string, any>;
 class FakeDB {
@@ -26,7 +34,7 @@ class FakeDB {
       async run() {
         if (sql.startsWith('INSERT INTO sessions')) db.sessions.push({ id_hash: values[0], user_id: values[1], created_at: values[2], expires_at: values[3], last_seen_at: values[4], revoked_at: null });
         else if (sql.startsWith('UPDATE sessions SET last_seen_at')) { const s = db.sessions.find(x => x.id_hash === values[1]); if (s) s.last_seen_at = values[0]; }
-        else if (sql.startsWith('UPDATE users SET password_hash')) { const u = db.users.find(x => x.id === values[2]); if (u) { u.password_hash = values[0]; u.updated_at = values[1]; } }
+        else if (sql.startsWith('UPDATE users SET password_hash')) { const third = values.length === 3; const u = db.users.find(x => x.id === (third ? values[2] : values[1])); if (u) { u.password_hash = values[0]; if (third) u.updated_at = values[1]; } }
         else if (sql.startsWith('UPDATE sessions SET revoked_at') && sql.includes('user_id = ?')) { for (const s of db.sessions) if (s.user_id === values[1] && s.id_hash !== values[2] && !s.revoked_at) s.revoked_at = values[0]; }
         else if (sql.startsWith('UPDATE sessions SET revoked_at')) { const s = db.sessions.find(x => x.id_hash === values[1]); if (s) s.revoked_at = values[0]; }
         else if (sql.startsWith('DELETE FROM login_attempts')) db.attempts = db.attempts.filter(x => x.key_hash !== values[0]);
@@ -110,5 +118,25 @@ describe('Phase 1 authentication', () => {
   it('blocks the sixth wrong password attempt within the 15-minute window', async () => {
     for (let i = 0; i < 5; i++) expect((await worker.fetch(post('/api/auth/login', { email: db.users[0].email, password: 'wrong-password' }), env())).status).toBe(401);
     expect((await worker.fetch(post('/api/auth/login', { email: db.users[0].email, password: 'wrong-password' }), env())).status).toBe(429);
+  });
+});
+
+describe('password hashing strength', () => {
+  it('hashes new passwords at the OWASP-recommended iteration count', async () => {
+    expect(PBKDF2_ITERATIONS).toBeGreaterThanOrEqual(600_000);
+    const hash = db.users[0].password_hash;
+    expect(Number(hash.split('$')[1])).toBe(100_000); // legacy fixture
+    expect(passwordNeedsRehash(hash)).toBe(true);
+  });
+  it('still verifies legacy 100k hashes and rehashes transparently on login', async () => {
+    const legacy = await legacyHash('some-legacy-password');
+    expect(await verifyPassword(legacy, 'some-legacy-password')).toBe(true);
+    expect(passwordNeedsRehash(legacy)).toBe(true);
+    const user = { id: 'user-legacy', email: 'tranbinhanbr01@gmail.com', password_hash: legacy, disabled_at: null };
+    db.users = [user];
+    const login = await worker.fetch(post('/api/auth/login', { email: user.email, password: 'some-legacy-password' }), env());
+    expect(login.status).toBe(200);
+    expect(user.password_hash.startsWith(`pbkdf2-sha256$${PBKDF2_ITERATIONS}$`)).toBe(true);
+    expect(passwordNeedsRehash(user.password_hash)).toBe(false);
   });
 });

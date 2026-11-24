@@ -1,4 +1,4 @@
-import { cookieHeader, createSession, currentSession, hashPassword, isAllowed, readCookie, sha256Hex, validMutationOrigin, verifyPassword, type AuthEnv } from './auth';
+import { cookieHeader, createSession, currentSession, hashPassword, isAllowed, passwordNeedsRehash, readCookie, sha256Hex, validMutationOrigin, verifyPassword, type AuthEnv } from './auth';
 import { handleNotes } from './notes';
 import { decryptText, encryptText, getEncryptionKey } from './crypto';
 import { generateTotpSecret, hashRecoveryCode, recoveryCodes, verifyTotp } from './totp';
@@ -39,6 +39,7 @@ async function login(request: Request, env: Env): Promise<Response> {
     return error('Incorrect email or password', 401);
   }
   await env.DB.prepare('DELETE FROM login_attempts WHERE key_hash = ?').bind(keyHash).run();
+  if (passwordNeedsRehash(row.password_hash)) await env.DB.prepare('UPDATE users SET password_hash = ? WHERE id = ?').bind(await hashPassword(input.password), row.id).run();
   if (row.totp_enabled_at != null) { const challenge = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32)))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,''); await env.DB.prepare('INSERT INTO auth_challenges (token_hash,user_id,expires_at,created_at) VALUES (?,?,?,?)').bind(await sha256Hex(challenge),row.id,now+300000,now).run(); return json({ requires_2fa: true, challenge_token: challenge }); }
   const token = await createSession(env, row, request.headers.get('user-agent') || '');
   return json({ email: row.email }, 200, { 'Set-Cookie': cookieHeader(token) });

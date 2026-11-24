@@ -157,7 +157,7 @@ export function NoteEditor({
     const durations:Record<string,number>={'24h':86400000,'7d':604800000,'30d':2592000000}
     const key=await crypto.subtle.generateKey({name:'AES-GCM',length:256},true,['encrypt']),iv=crypto.getRandomValues(new Uint8Array(12))
     const encrypted=await crypto.subtle.encrypt({name:'AES-GCM',iv},key,new TextEncoder().encode(JSON.stringify({title:draftRef.current.title,body_md:draftRef.current.body})))
-    const b64=(data:Uint8Array)=>btoa(String.fromCharCode(...data)),raw=new Uint8Array(await crypto.subtle.exportKey('raw',key))
+    const b64=(data:Uint8Array)=>{let s='';for(let i=0;i<data.length;i+=0x8000)s+=String.fromCharCode(...data.subarray(i,i+0x8000));return btoa(s)},raw=new Uint8Array(await crypto.subtle.exportKey('raw',key))
     const created=await createNoteShare(note.id,{ciphertext_b64:b64(new Uint8Array(encrypted)),iv_b64:b64(iv),expires_at:expiry==='never'?null:Date.now()+durations[expiry]})
     const url=`${location.origin}/s/${created.id}#${b64(raw)}`
     sessionStorage.setItem(`inotion-share:${created.id}`,url)
@@ -174,7 +174,7 @@ export function NoteEditor({
       if(duration!=='never'&&!ms[duration])throw new Error('Choose 24h, 7d, 30d, or never.')
       const key=await crypto.subtle.generateKey({name:'AES-GCM',length:256},true,['encrypt']),iv=crypto.getRandomValues(new Uint8Array(12))
       const bytes=await crypto.subtle.encrypt({name:'AES-GCM',iv},key,new TextEncoder().encode(JSON.stringify({title:draftRef.current.title,body_md:draftRef.current.body})))
-      const b64=(data:Uint8Array)=>btoa(String.fromCharCode(...data))
+      const b64=(data:Uint8Array)=>{let s='';for(let i=0;i<data.length;i+=0x8000)s+=String.fromCharCode(...data.subarray(i,i+0x8000));return btoa(s)}
       const raw=new Uint8Array(await crypto.subtle.exportKey('raw',key)),cipher=new Uint8Array(bytes)
       const created=await createNoteShare(note.id,{ciphertext_b64:b64(cipher),iv_b64:b64(iv),expires_at:duration==='never'?null:Date.now()+ms[duration]})
       const link=`${location.origin}/s/${created.id}#${b64(raw)}`

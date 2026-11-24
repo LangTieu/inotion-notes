@@ -18,10 +18,13 @@ export async function sha256Hex(value: string): Promise<string> {
   const hash = new Uint8Array(await crypto.subtle.digest('SHA-256', encoder.encode(value)));
   return [...hash].map(x => x.toString(16).padStart(2, '0')).join('');
 }
+export const PBKDF2_ITERATIONS = 600_000;
+export const PBKDF2_MIN_ITERATIONS = 100_000;
+
 export async function hashPassword(password: string, salt = crypto.getRandomValues(new Uint8Array(16))): Promise<string> {
   const material = await crypto.subtle.importKey('raw', encoder.encode(password), 'PBKDF2', false, ['deriveBits']);
-  const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', salt, iterations: 100_000, hash: 'SHA-256' }, material, 256);
-  return `pbkdf2-sha256$100000$${b64url(salt)}$${b64url(new Uint8Array(bits))}`;
+  const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', salt, iterations: PBKDF2_ITERATIONS, hash: 'SHA-256' }, material, 256);
+  return `pbkdf2-sha256$${PBKDF2_ITERATIONS}$${b64url(salt)}$${b64url(new Uint8Array(bits))}`;
 }
 export async function safeEqual(a: string, b: string): Promise<boolean> {
   const aa = encoder.encode(a), bb = encoder.encode(b);
@@ -32,12 +35,16 @@ export async function safeEqual(a: string, b: string): Promise<boolean> {
 export async function verifyPassword(encoded: string, password: string): Promise<boolean> {
   const [scheme, iterationsText, saltText, expected] = encoded.split('$');
   const iterations = Number(iterationsText);
-  if (scheme !== 'pbkdf2-sha256' || !Number.isSafeInteger(iterations) || iterations < 100_000 || !saltText || !expected) return false;
+  if (scheme !== 'pbkdf2-sha256' || !Number.isSafeInteger(iterations) || iterations < PBKDF2_MIN_ITERATIONS || !saltText || !expected) return false;
   try {
     const material = await crypto.subtle.importKey('raw', encoder.encode(password), 'PBKDF2', false, ['deriveBits']);
     const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', salt: fromB64url(saltText).buffer as ArrayBuffer, iterations, hash: 'SHA-256' }, material, 256);
     return safeEqual(b64url(new Uint8Array(bits)), expected);
   } catch { return false; }
+}
+export function passwordNeedsRehash(encoded: string): boolean {
+  const iterations = Number(encoded.split('$')[1]);
+  return !(Number.isSafeInteger(iterations) && iterations >= PBKDF2_ITERATIONS);
 }
 export function isAllowed(email: string, list = ''): boolean {
   return list.split(',').map(x => x.trim().toLowerCase()).filter(Boolean).includes(email.toLowerCase());
